@@ -52,37 +52,37 @@ class DetikzifyProcessor(ProcessorMixin):
         if image_token not in tokenizer.vocab:
             raise ValueError(f"{image_token} needs to be added to the `tokenizer` vocabulary.")
 
-        self.image_token = image_token
-        self.image_seq_len = image_seq_len
+        self.image_token = image_token # store the image token
+        self.image_seq_len = image_seq_len # store the image sequence length
 
-        super().__init__(image_processor, tokenizer, **kwargs)
+        super().__init__(image_processor, tokenizer, **kwargs) # initialize the processor calling the ProcessorMixin class
 
     def __call__(
         self,
-        text: Union[TextInput, PreTokenizedInput, List[TextInput], List[PreTokenizedInput]] = None,
-        images: ImageInput = None,
-        image_seq_len: Optional[int] = None,
-        add_bos_token: bool = None,
-        add_eos_token: bool = None,
+        text: Union[TextInput, PreTokenizedInput, List[TextInput], List[PreTokenizedInput]] = None, # accept text or pre-tokenized input
+        images: ImageInput = None, # accept images
+        image_seq_len: Optional[int] = None, # override the image sequence length
+        add_bos_token: bool = None, # add beginning of sentence token
+        add_eos_token: bool = None, # add end of sentence token
         **kwargs: Unpack[DetikzifyProcessorKwargs],
     ) -> BatchEncoding:
-        output_kwargs = self._merge_kwargs(
+        output_kwargs = self._merge_kwargs( # merges keyword arguments with default tokenizer and image processor arguments
             DetikzifyProcessorKwargs,
             tokenizer_init_kwargs=self.tokenizer.init_kwargs,
             **kwargs,
         )
         # Temporary fix for "padding_side" in init_kwargs
-        output_kwargs["text_kwargs"].pop("padding_side", None)
+        output_kwargs["text_kwargs"].pop("padding_side", None) # remove padding_side from text_kwargs
 
-        if images is None:
+        if images is None: # if no images are provided, raise an error
             raise ValueError("`images` are expected as arguments to a `DetikzifyProcessor` instance.")
         else:
-            images = make_list_of_images(images)
-        if text is None:
+            images = make_list_of_images(images) # convert images to a list of images to enable batch processing
+        if text is None: # if no text is provided, default to an empty string
             text = len(images) * [""]
-        elif isinstance(text, str):
+        elif isinstance(text, str): # if text is a single string, convert it to a list of strings
             text = [text]
-        if len(images) != len(text):
+        if len(images) != len(text): # ensure equal number of images and text prompts
             raise ValueError(
                 f"Received {len(images)} images for {len(text)} prompts. Each prompt should be associated with an image."
             )
@@ -90,26 +90,26 @@ class DetikzifyProcessor(ProcessorMixin):
         prompt_strings = []
         for prompt in text:
             assert self.image_token not in prompt, "Image tokens are added by the processor!"
-            if add_bos_token:
+            if add_bos_token: # add beginning of sentence token
                 prompt = self.tokenizer.bos_token + prompt
-            if add_eos_token:
+            if add_eos_token: # add end of sentence token
                 prompt += self.tokenizer.eos_token
             image_seq_len = image_seq_len if image_seq_len is not None else self.image_seq_len
-            prompt_strings.append((self.image_token * image_seq_len) + prompt)
+            prompt_strings.append((self.image_token * image_seq_len) + prompt) # append image token to prompt
 
-        image_inputs = self.image_processor(images=images, **output_kwargs["images_kwargs"])
-        text_inputs = self.tokenizer(text=prompt_strings, **output_kwargs["text_kwargs"])
+        image_inputs = self.image_processor(images=images, **output_kwargs["images_kwargs"]) # process images
+        text_inputs = self.tokenizer(text=prompt_strings, **output_kwargs["text_kwargs"]) # tokenize text prompts
 
-        return BatchFeature(data={**image_inputs, **text_inputs})
+        return BatchFeature(data={**image_inputs, **text_inputs}) # return combined image and text inputs
 
-    def batch_decode(self, *args, **kwargs):
+    def batch_decode(self, *args, **kwargs): # decode batch of inputs
         return self.tokenizer.batch_decode(*args, **kwargs)
 
-    def decode(self, *args, **kwargs):
+    def decode(self, *args, **kwargs): # decode single input
         return self.tokenizer.decode(*args, **kwargs)
 
-    @property
-    def model_input_names(self):
-        tokenizer_input_names = self.tokenizer.model_input_names
-        image_processor_input_names = self.image_processor.model_input_names
+    @property # ensures the model receives all required inputs
+    def model_input_names(self): # returns a list of all input names required by the model
+        tokenizer_input_names = self.tokenizer.model_input_names # get input names from tokenizer
+        image_processor_input_names = self.image_processor.model_input_names # get input names from image processor
         return list(dict.fromkeys(tokenizer_input_names + image_processor_input_names))

@@ -25,22 +25,22 @@ from transformers.utils import logging
 logger = logging.get_logger(__name__)
 
 
-class DetikzifyVisionConfig(PretrainedConfig):
+class DetikzifyVisionConfig(PretrainedConfig): # store the configuration of the vision model
     model_type = "detikzify"
 
     def __init__(
         self,
-        hidden_size=1152,
-        intermediate_size=4304,
-        num_hidden_layers=27,
-        num_attention_heads=16,
-        num_channels=3,
-        image_size=420,
-        patch_size=14,
-        hidden_act="gelu_pytorch_tanh",
-        layer_norm_eps=1e-6,
-        attention_dropout=0.0,
-        initializer_range=0.02,
+        hidden_size=1152, # embedding dimension
+        intermediate_size=4304, # intermediate size of the feed-forward layer in the encoder
+        num_hidden_layers=27, # number of hidden layers in the encoder
+        num_attention_heads=16, # number of attention heads in the encoder
+        num_channels=3, # number of channels in the input image (RGB)
+        image_size=420, # size of the input image (image_size x image_size)
+        patch_size=14, # size of each patch in the input image
+        hidden_act="gelu_pytorch_tanh", # activation function used in the encoder
+        layer_norm_eps=1e-6, # epsilon value for layer normalization
+        attention_dropout=0.0, # dropout rate for the attention layers
+        initializer_range=0.02, # standard deviation for the weight initialization
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -58,17 +58,17 @@ class DetikzifyVisionConfig(PretrainedConfig):
         self.initializer_range = initializer_range
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path: Union[str, os.PathLike], **kwargs) -> "PretrainedConfig":
+    def from_pretrained(cls, pretrained_model_name_or_path: Union[str, os.PathLike], **kwargs) -> "PretrainedConfig": # load the configuration from a pretrained model
         cls._set_token_in_kwargs(kwargs)
 
-        config_dict, kwargs = cls.get_config_dict(pretrained_model_name_or_path, **kwargs)
+        config_dict, kwargs = cls.get_config_dict(pretrained_model_name_or_path, **kwargs) # fetch the configuration dictionary from the pretrained model
 
         # get the vision config dict if we are loading from DetikzifyConfig
         if config_dict.get("model_type") == "detikzify":
-            config_dict = config_dict["vision_config"]
+            config_dict = config_dict["vision_config"] # get only the vision configuration
 
         if "model_type" in config_dict and hasattr(cls, "model_type") and config_dict["model_type"] != cls.model_type:
-            logger.warning(
+            logger.warning( # log a warning if the model type is different from the DetikzifyVisionConfig model type
                 f"You are using a model of type {config_dict['model_type']} to instantiate a model of type "
                 f"{cls.model_type}. This is not supported for all configurations of models and can yield errors."
             )
@@ -76,40 +76,40 @@ class DetikzifyVisionConfig(PretrainedConfig):
         return cls.from_dict(config_dict, **kwargs)
 
 
-class DetikzifyConfig(PretrainedConfig):
+class DetikzifyConfig(PretrainedConfig): # store the overall configuration of the model, including the vision and text configurations
     model_type = "detikzify"
-    is_composition = True
+    is_composition = True # indicates that the model is a multi-modal model
 
     def __init__(
         self,
-        use_cache=True,
-        image_token_id=128005,
-        tie_word_embeddings=False,
-        vision_config=None,
-        text_config=None,
-        concat_factor=3,
-        pad_token_id=128004,
+        use_cache=True, # enable key value caching for faster text generation
+        image_token_id=128005, # token ID for the image token
+        tie_word_embeddings=False, # if True, input and output word embeddings share the same weights
+        vision_config=None, # store the vision configuration
+        text_config=None, # store the text configuration
+        concat_factor=3, # determines how many image tokens are concatenated to the text tokens
+        pad_token_id=128004, # token ID for the padding token
         **kwargs,
     ):
         self.image_token_id = image_token_id
         self.use_cache = use_cache
         self.tie_word_embeddings = tie_word_embeddings
 
-        if vision_config is None:
+        if vision_config is None: # if no vision configuration is provided, use the default vision configuration
             self.vision_config = DetikzifyVisionConfig()
             logger.info("vision_config is None, using default vision config")
-        elif isinstance(vision_config, dict):
+        elif isinstance(vision_config, dict): # if a dictionary is provided, convert it to a DetikzifyVisionConfig object
             self.vision_config = DetikzifyVisionConfig(**vision_config)
-        elif isinstance(vision_config, DetikzifyVisionConfig):
+        elif isinstance(vision_config, DetikzifyVisionConfig): # if a DetikzifyVisionConfig object is provided, use it as is
             self.vision_config = vision_config
 
-        if isinstance(text_config, dict):
-            text_config["model_type"] = text_config["model_type"] if "model_type" in text_config else "llama"
+        if isinstance(text_config, dict): # if a dictionary is provided, convert it to a text configuration object
+            text_config["model_type"] = text_config["model_type"] if "model_type" in text_config else "llama" # set the model type to "LLaMA" as default if not provided
             text_config = CONFIG_MAPPING[text_config["model_type"]](**text_config)
-        elif text_config is None:
+        elif text_config is None: # if no text configuration is provided, use the default text configuration (LLaMA)
             logger.info("text_config is None, using default text config")
-            text_config = CONFIG_MAPPING["llama"](
-                rms_norm_eps=1e-5,
+            text_config = CONFIG_MAPPING["llama"]( # use the default LLaMA configuration
+                rms_norm_eps=1e-5, # epsilon value for RMS normalization
                 pad_token_id=pad_token_id,
                 tie_word_embeddings=False,
             )
