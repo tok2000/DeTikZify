@@ -89,11 +89,64 @@ class DetikzifyConfig(PretrainedConfig): # store the overall configuration of th
         text_config=None, # store the text configuration
         concat_factor=3, # determines how many image tokens are concatenated to the text tokens
         pad_token_id=128004, # token ID for the padding token
+
+        mm_vision_tower_aux_list=None, # auxiliary vision tower list
+        mm_projector_type="sva", # type of projector used in the multimodal model
+        query_num_list=None, # number of queries for each vision tower
+        connector_depth=3, # depth of the connector
+        vision_hidden_size=1024, # embedding dimension of the vision model
+        sva_layers=2, # number of spatial vision aggregator layers
+
         **kwargs,
     ):
         self.image_token_id = image_token_id
         self.use_cache = use_cache
         self.tie_word_embeddings = tie_word_embeddings
+
+        if mm_vision_tower_aux_list is None:
+            mm_vision_tower_aux_list = ["siglip"]
+        elif isinstance(mm_vision_tower_aux_list, str):
+            mm_vision_tower_aux_list = [mm_vision_tower_aux_list]
+
+        self.mm_vision_tower_aux_list = mm_vision_tower_aux_list
+
+        if not isinstance(self.mm_vision_tower_aux_list, list):
+            raise ValueError("mm_vision_tower_aux_list must be a list of vision tower names")
+
+        print(f"mm_vision_tower_aux_list: {self.mm_vision_tower_aux_list}")  # Debugging
+        print(f"query_num_list: {query_num_list}")  # Debugging
+
+        if query_num_list is None:
+            logger.warning("query_num_list is missing in config.json. Using default: [4, 8]")
+            query_num_list = [4] * len(self.mm_vision_tower_aux_list)
+
+        self.query_num_list = query_num_list
+
+        # ensures that the length of the query_num_list is the same as the length of the mm_vision_tower_aux_list
+        if len(self.query_num_list) != len(self.mm_vision_tower_aux_list):
+            raise ValueError(
+                f"query_num_list must have the same length as mm_vision_tower_aux_list, "
+                f"got {len(self.query_num_list)} and {len(self.mm_vision_tower_aux_list)}"
+            )
+
+        # dynamically calculate the vision_hidden_size based on the vision tower names
+        if len(self.mm_vision_tower_aux_list) == 1:
+            enc = self.mm_vision_tower_aux_list[0]
+            self.vision_hidden_size = 1024 if "siglip" in enc else 1152 if "dino" in enc else 1536 if "CLIP-convnext_l" in enc else 3072 if "CLIP-convnext_xxl" in enc else 1152
+        else:
+            self.vision_hidden_size = sum(
+                1024 if "siglip" in enc
+                else 1152 if "dino" in enc
+                else 1536 if "CLIP-convnext_l" in enc
+                else 3072 if "CLIP-convnext_xxl" in enc
+                else 1152
+                for enc in model.config.mm_vision_tower_aux_list
+            )
+
+        self.mm_projector_type = mm_projector_type
+        self.query_num_list = query_num_list
+        self.connector_depth = connector_depth
+        self.sva_layers = sva_layers
 
         if vision_config is None: # if no vision configuration is provided, use the default vision configuration
             self.vision_config = DetikzifyVisionConfig()
