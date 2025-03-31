@@ -33,7 +33,7 @@ from transformers import (
 from transformers.modeling_outputs import ModelOutput
 from transformers.utils import logging
 
-from .configuration_detikzify import DetikzifyConfig
+from .configuration_detikzify import DetikzifyCambrianConfig
 from .sva_module import SpatialVisionAggregator
 from .encoder.siglip_encoder import SiglipVisionTower
 from .encoder.dino_encoder import DinoVisionTower
@@ -90,7 +90,7 @@ class DetikzifyConnector(nn.Module): # connector module to project image hidden 
 
 
 class DetikzifyPreTrainedModel(PreTrainedModel): # base class for all models
-    config_class = DetikzifyConfig # uses DetikzifyConfig for configuration
+    config_class = DetikzifyCambrianConfig # uses DetikzifyCambrianConfig for configuration
     base_model_prefix = "model"
     supports_gradient_checkpointing = True # enable gradient checkpointing to save memory during training
     _no_split_modules = []
@@ -119,8 +119,8 @@ class DetikzifyPreTrainedModel(PreTrainedModel): # base class for all models
                 module.weight.data[module.padding_idx].zero_() # initialize padding index to zero
 
 
-class DetikzifyModel(DetikzifyPreTrainedModel): # main model class for Detikzify
-    def __init__(self, config: DetikzifyConfig):
+class DetikzifyCambrianModel(DetikzifyPreTrainedModel): # main model class for Detikzify
+    def __init__(self, config: DetikzifyCambrianConfig):
         super().__init__(config)
         self.padding_idx = self.config.text_config.pad_token_id
         self.vocab_size = self.config.text_config.vocab_size
@@ -147,7 +147,13 @@ class DetikzifyModel(DetikzifyPreTrainedModel): # main model class for Detikzify
         if config.mm_projector_type == "sva": # if projector type is spatial vision aggregator
             self.sva = SpatialVisionAggregator( # initialize spatial vision aggregator (SVA) module
                 q_dim=config.text_config.hidden_size, # query dimension
-                kv_dim_list=[config.vision_config.hidden_size] * len(config.mm_vision_tower_aux_list), # key-value dimension
+                kv_dim_list=[ # key-value dimension
+                    1024 if "siglip" in name else
+                    1152 if "dino" in name else
+                    1536 if "CLIP-convnext-L" in name else
+                    3072 if "CLIP-convnext-XXL" in name else 1152
+                    for name in config.mm_vision_tower_aux_list
+                ],
                 hidden_dim=config.text_config.hidden_size, # hidden dimension
                 num_heads=config.text_config.num_attention_heads, # number of attention heads
                 num_layers=config.sva_layers, # number of hidden layers
@@ -245,8 +251,11 @@ class DetikzifyModel(DetikzifyPreTrainedModel): # main model class for Detikzify
         past_seen_tokens = 0
         if use_cache:
             if past_key_values is None:
-                past_key_values = DynamicCache() # initialize cache for past key values
-            past_seen_tokens = past_key_values.get_seq_length()
+                past_key_values = DynamicCache()  # during training / fine-tuning
+            elif hasattr(past_key_values, 'get_seq_length'):
+                past_seen_tokens = past_key_values.get_seq_length()
+            elif isinstance(past_key_values, (tuple, list)):
+                past_seen_tokens = len(past_key_values)
 
         if inputs_embeds is not None and input_ids is None and past_seen_tokens == 0:
             raise ValueError("When first calling the model, if input_embeds are passed, input_ids should not be None.")
@@ -255,14 +264,16 @@ class DetikzifyModel(DetikzifyPreTrainedModel): # main model class for Detikzify
             inputs_embeds = self.text_model.get_input_embeddings()(input_ids).to(self.device)
 
         # START VISUAL INPUTS INTEGRATION
+        sva_kwargs = {}
         if pixel_values is not None and image_hidden_states is not None:
             raise ValueError("You cannot specify both pixel_values and image_hidden_states at the same time")
         elif pixel_values is not None: # if pixel values are provided
             if isinstance(self.vision_models, nn.ModuleList): # if auxiliary vision models are provided
-                vision_hidden_states_list = [vision_model(pixel_values).last_hidden_state for vision_model in self.vision_models]
-                image_hidden_states = torch.cat(vision_hidden_states_list, dim=1)
+                vision_hidden_states_list = [vision_model._forward(pixel_values) for vision_model in self.vision_models]
+                image_hidden_states = vision_hidden_states_list[0]
             else:
                 image_hidden_states = self.vision_model(pixel_values.to(dtype=self.dtype)).last_hidden_state # single encoder for vision inputs
+                vision_hidden_states_list = [image_hidden_states]
             
             if self.config.mm_projector_type == "sva": # if projector type is spatial vision aggregator
                 queries = torch.zeros(image_hidden_states.shape[0], 1, self.config.text_config.hidden_size).to(image_hidden_states.device) # initialize queries
@@ -273,7 +284,7 @@ class DetikzifyModel(DetikzifyPreTrainedModel): # main model class for Detikzify
         elif image_hidden_states is not None: # if image hidden states are provided
             image_hidden_states = image_hidden_states.to(dtype=self.dtype, device=input_ids.device) # no need to project image hidden states to text hidden states
 
-        if past_seen_tokens == 0 and inputs_embeds is not None and image_hidden_states is not None:
+        if past_seen_tokens == 0 and inputs_embeds is not None and image_hidden_states is not None and self.config.mm_projector_type != "sva":
             # When we generate, we don't want to replace the potential image_token_id that we generated by images
             # that simply don't exist
             inputs_embeds = self.inputs_merger( # merge text and image inputs using image hidden states and input embeddings
@@ -291,6 +302,7 @@ class DetikzifyModel(DetikzifyPreTrainedModel): # main model class for Detikzify
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
+            **sva_kwargs
         )
 
         if not return_dict: # return output of the model without past key values
@@ -305,12 +317,12 @@ class DetikzifyModel(DetikzifyPreTrainedModel): # main model class for Detikzify
         )
 
 
-class DetikzifyForConditionalGeneration(DetikzifyPreTrainedModel, GenerationMixin): # model class for conditional generation
+class DetikzifyCambrianForConditionalGeneration(DetikzifyPreTrainedModel, GenerationMixin): # model class for conditional generation
     _tied_weights_keys = ["lm_head.weight"] # specify keys for tied weights
 
     def __init__(self, config):
         super().__init__(config)
-        self.model = DetikzifyModel(config) # initialize Detikzify model
+        self.model = DetikzifyCambrianModel(config) # initialize Detikzify model
         self.image_token_id = self.config.image_token_id
 
         self.lm_head = nn.Linear(config.text_config.hidden_size, config.text_config.vocab_size, bias=False) # linear layer for language modeling head
@@ -457,10 +469,6 @@ class DetikzifyForConditionalGeneration(DetikzifyPreTrainedModel, GenerationMixi
             model_inputs = {"input_ids": input_ids.clone(memory_format=torch.contiguous_format), "inputs_embeds": None}
         if num_logits_to_keep is not None: # specify number of logits to keep for each generation step, useful for beam search
             model_inputs["num_logits_to_keep"] = num_logits_to_keep
-        if image_hidden_states is not None:
-            image_hidden_states = self.vision_model(pixel_values.to(dtype=self.dtype)).last_hidden_state # forward pass for the vision model
-            queries = torch.zeros(image_hidden_states.shape[0], 1, self.config.text_config.hidden_size).to(image_hidden_states.device) # initialize queries
-            image_hidden_states = self.model.sva(queries, [image_hidden_states]) # apply SVA to vision tokens
 
         model_inputs.update( # update model inputs with all the necessary information
             {

@@ -32,6 +32,7 @@ class BaseVisionTower(nn.Module, ABC):
         self.select_feature = getattr(args, "mm_vision_select_feature", "patch") # select feature to extract
         self.unfreeze_mm_vision_tower = getattr(args, "unfreeze_mm_vision_tower", False) # unfreeze vision tower
         self.delay_load = delay_load
+        self._interp_size = 729
 
     @abstractmethod
     def load_model(self, device_map=None): # must be implemented by subclasses

@@ -76,7 +76,7 @@ class DetikzifyVisionConfig(PretrainedConfig): # store the configuration of the 
         return cls.from_dict(config_dict, **kwargs)
 
 
-class DetikzifyConfig(PretrainedConfig): # store the overall configuration of the model, including the vision and text configurations
+class DetikzifyCambrianConfig(PretrainedConfig): # store the overall configuration of the model, including the vision and text configurations
     model_type = "detikzify"
     is_composition = True # indicates that the model is a multi-modal model
 
@@ -117,7 +117,7 @@ class DetikzifyConfig(PretrainedConfig): # store the overall configuration of th
         print(f"query_num_list: {query_num_list}")  # Debugging
 
         if query_num_list is None:
-            logger.warning("query_num_list is missing in config.json. Using default: [4, 8]")
+            logger.warning("query_num_list is missing in config.json. Using default.")
             query_num_list = [4] * len(self.mm_vision_tower_aux_list)
 
         self.query_num_list = query_num_list
@@ -140,7 +140,7 @@ class DetikzifyConfig(PretrainedConfig): # store the overall configuration of th
                 else 1536 if "CLIP-convnext_l" in enc
                 else 3072 if "CLIP-convnext_xxl" in enc
                 else 1152
-                for enc in model.config.mm_vision_tower_aux_list
+                for enc in self.mm_vision_tower_aux_list
             )
 
         self.mm_projector_type = mm_projector_type
@@ -163,7 +163,7 @@ class DetikzifyConfig(PretrainedConfig): # store the overall configuration of th
             logger.info("text_config is None, using default text config")
             text_config = CONFIG_MAPPING["llama"]( # use the default LLaMA configuration
                 rms_norm_eps=1e-5, # epsilon value for RMS normalization
-                pad_token_id=pad_token_id, # token ID for the padding token
+                pad_token_id=128004, # token ID for the padding token
                 tie_word_embeddings=False,
 
                 hidden_size=2048, # embedding dimension of LLaMA 3.2 1B

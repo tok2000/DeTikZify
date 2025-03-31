@@ -40,7 +40,7 @@ class DetikzifyProcessorKwargs(ProcessingKwargs, total=False):
     }
 
 
-class DetikzifyProcessor(ProcessorMixin):
+class DetikzifyCambrianProcessor(ProcessorMixin):
     attributes = ["image_processor", "tokenizer"]
     image_processor_class = "AutoImageProcessor"
     tokenizer_class = "AutoTokenizer"
@@ -54,7 +54,7 @@ class DetikzifyProcessor(ProcessorMixin):
             raise ValueError(f"{image_token} needs to be added to the `tokenizer` vocabulary.")
 
         self.image_token = image_token # store the image token
-        self.image_seq_len = image_seq_len # store the image sequence length
+        self.image_seq_len = image_seq_len if image_seq_len is not None else 300 # store the image sequence length
         self.vision_tower_list = kwargs.get("mm_vision_tower_aux_list", ["siglip"]) # store the vision tower list
 
         super().__init__(image_processor, tokenizer, **kwargs) # initialize the processor calling the ProcessorMixin class
@@ -117,7 +117,7 @@ class DetikzifyProcessor(ProcessorMixin):
             for vision_tower in self.vision_tower_list:
                 vision_features = self.image_processor(images=images, return_tensors=True) # process images
                 image_features.append(vision_features)
-                return torch.cat(image_features, dim=-1) # concatenate vision features along the last dimension
+            return torch.cat(image_features, dim=-1) # concatenate vision features along the last dimension
         else:
             return self.image_processor(images=images, return_tensors=False) # single vision tower case
 

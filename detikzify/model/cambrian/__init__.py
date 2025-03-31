@@ -18,9 +18,9 @@ if is_timm_available():
 
 def register():
     try:
-        AutoConfig.register("detikzify", DetikzifyConfig)
-        AutoModelForVision2Seq.register(DetikzifyConfig, DetikzifyForConditionalGeneration)
-        AutoProcessor.register(DetikzifyConfig, DetikzifyProcessor)
+        AutoConfig.register("detikzify", DetikzifyCambrianConfig)
+        AutoModelForVision2Seq.register(DetikzifyCambrianConfig, DetikzifyCambrianForConditionalGeneration)
+        AutoProcessor.register(DetikzifyCambrianConfig, DetikzifyCambrianProcessor)
     except ValueError:
         pass # already registered
 
@@ -32,7 +32,7 @@ def load(model_name_or_path, modality_projector=None, is_v1=False, **kwargs):
             modality_projector=modality_projector,
             **kwargs
         )
-        return model, DetikzifyProcessor(
+        return model, DetikzifyCambrianProcessor(
             tokenizer=tokenizer,
             image_processor=image_processor,
             image_seq_len=model.config.num_patches,
