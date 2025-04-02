@@ -45,7 +45,7 @@ class DetikzifyCambrianProcessor(ProcessorMixin):
     image_processor_class = "AutoImageProcessor"
     tokenizer_class = "AutoTokenizer"
 
-    def __init__(self, image_processor, tokenizer=None, image_seq_len: int = 300, image_token: str = "<|reserved_special_token_2|>", **kwargs):
+    def __init__(self, image_processor, tokenizer=None, image_seq_len=300, image_token="<image>", mm_vision_tower_aux_list=None, query_num_list=None):
         if image_processor is None:
             raise ValueError("You need to specify an `image_processor`.")
         if tokenizer is None:
@@ -54,10 +54,17 @@ class DetikzifyCambrianProcessor(ProcessorMixin):
             raise ValueError(f"{image_token} needs to be added to the `tokenizer` vocabulary.")
 
         self.image_token = image_token # store the image token
-        self.image_seq_len = image_seq_len if image_seq_len is not None else 300 # store the image sequence length
-        self.vision_tower_list = kwargs.get("mm_vision_tower_aux_list", ["siglip"]) # store the vision tower list
+        if image_seq_len is None:
+            if isinstance(self.vision_tower_list, list) and "query_num_list" in kwargs:
+                self.image_seq_len = sum(kwargs["query_num_list"])
+            else:
+                self.image_seq_len = 300
+        else:
+            self.image_seq_len = image_seq_len
+        self.vision_tower_list = mm_vision_tower_aux_list or ["siglip"]
+        self.query_num_list = query_num_list or [4] * len(self.vision_tower_list)
 
-        super().__init__(image_processor, tokenizer, **kwargs) # initialize the processor calling the ProcessorMixin class
+        super().__init__(image_processor, tokenizer) # initialize the processor calling the ProcessorMixin class
 
     def __call__(
         self,

@@ -25,7 +25,7 @@ from transformers.utils import logging
 logger = logging.get_logger(__name__)
 
 
-class DetikzifyVisionConfig(PretrainedConfig): # store the configuration of the vision model
+class DetikzifyCambrianVisionConfig(PretrainedConfig): # store the configuration of the vision model
     model_type = "detikzify"
 
     def __init__(
@@ -68,7 +68,7 @@ class DetikzifyVisionConfig(PretrainedConfig): # store the configuration of the 
             config_dict = config_dict["vision_config"] # get only the vision configuration
 
         if "model_type" in config_dict and hasattr(cls, "model_type") and config_dict["model_type"] != cls.model_type:
-            logger.warning( # log a warning if the model type is different from the DetikzifyVisionConfig model type
+            logger.warning( # log a warning if the model type is different from the DetikzifyCambrianVisionConfig model type
                 f"You are using a model of type {config_dict['model_type']} to instantiate a model of type "
                 f"{cls.model_type}. This is not supported for all configurations of models and can yield errors."
             )
@@ -149,11 +149,11 @@ class DetikzifyCambrianConfig(PretrainedConfig): # store the overall configurati
         self.sva_layers = sva_layers
 
         if vision_config is None: # if no vision configuration is provided, use the default vision configuration
-            self.vision_config = DetikzifyVisionConfig()
+            self.vision_config = DetikzifyCambrianVisionConfig()
             logger.info("vision_config is None, using default vision config")
-        elif isinstance(vision_config, dict): # if a dictionary is provided, convert it to a DetikzifyVisionConfig object
-            self.vision_config = DetikzifyVisionConfig(**vision_config)
-        elif isinstance(vision_config, DetikzifyVisionConfig): # if a DetikzifyVisionConfig object is provided, use it as is
+        elif isinstance(vision_config, dict): # if a dictionary is provided, convert it to a DetikzifyCambrianVisionConfig object
+            self.vision_config = DetikzifyCambrianVisionConfig(**vision_config)
+        elif isinstance(vision_config, DetikzifyCambrianVisionConfig): # if a DetikzifyCambrianVisionConfig object is provided, use it as is
             self.vision_config = vision_config
 
         if isinstance(text_config, dict): # if a dictionary is provided, convert it to a text configuration object

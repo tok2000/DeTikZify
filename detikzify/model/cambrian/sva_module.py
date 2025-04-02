@@ -72,25 +72,33 @@ class AggregationBlock(nn.Module):
         return queries
 
 class SpatialVisionAggregator(nn.Module):
-    def __init__(self, q_dim, kv_dim_list, hidden_dim, num_heads, num_layers):
+    def __init__(self, q_dim, kv_dim_list, hidden_dim, num_heads, num_layers, query_num_list=None):
         super().__init__()
         self.num_layers = num_layers
         self.kv_dim_list = kv_dim_list
 
+        assert len(kv_dim_list) == len(query_num_list), "kv_dim_list must match number of encoders"
         self.aggregation_blocks = nn.ModuleList([
-            AggregationBlock(q_dim, kv_dim_list[i], hidden_dim, num_heads) for i in range(num_layers)
+            AggregationBlock(q_dim, kv_dim, hidden_dim, num_heads)
+            for kv_dim in kv_dim_list
         ])
+
+        self.query_num_list = query_num_list or [4] * len(kv_dim_list)
 
 
     # queries: latent tokens that attend to relevant features from the vision features
     # vision_latents_attention_mask_list: raw image features extracted from multiple vision encoders
-    def forward(self, queries, vision_latents_attention_mask_list):
-        print("Number of Vision Towers Used:", len(vision_latents_attention_mask_list))
+    def forward(self, queries, vision_latents_list):
+        print("Number of Vision Towers Used:", len(vision_latents_list))
         
-        for i, vision_latents in enumerate(vision_latents_attention_mask_list):
+        for i, vision_latents in enumerate(vision_latents_list):
             print(f"Processing Vision Latents {i+1} of shape {vision_latents.shape}")
-    
-        for block, vision_latents in zip(self.aggregation_blocks, vision_latents_attention_mask_list):
-            queries = block(vision_latents, queries)  # Cross-attention update
-    
-        return queries
+
+        split_queries = torch.split(queries, self.query_num_list, dim=1)
+        all_queries = []
+        
+        for block, vision_latents, q in zip(self.aggregation_blocks, vision_latents_list, split_queries):
+            queries_per_encoder = block(vision_latents, q)
+            all_queries.append(queries_per_encoder)
+        
+        return torch.cat(all_queries, dim=1)

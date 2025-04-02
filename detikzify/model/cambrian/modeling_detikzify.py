@@ -144,19 +144,29 @@ class DetikzifyCambrianModel(DetikzifyPreTrainedModel): # main model class for D
         
         self.text_model = AutoModel.from_config(config.text_config) # initialize text model
 
+        # --- Infer kv_dim_list dynamically ---
+        with torch.no_grad():
+            dummy_image = torch.randn(1, 3, 384, 384).to(self.device)  # or 224/518 depending on encoder
+            kv_dim_list = [encoder(dummy_image).shape[-1] for encoder in self.vision_models]
+            for i, dim in enumerate(kv_dim_list):
+                print(f"[SVA] Vision encoder {i} output dim: {dim}")
+
+
         if config.mm_projector_type == "sva": # if projector type is spatial vision aggregator
             self.sva = SpatialVisionAggregator( # initialize spatial vision aggregator (SVA) module
                 q_dim=config.text_config.hidden_size, # query dimension
-                kv_dim_list=[ # key-value dimension
-                    1024 if "siglip" in name else
-                    1152 if "dino" in name else
-                    1536 if "CLIP-convnext-L" in name else
-                    3072 if "CLIP-convnext-XXL" in name else 1152
-                    for name in config.mm_vision_tower_aux_list
-                ],
+                #kv_dim_list=[ # key-value dimension
+                #    1024 if "siglip" in name else
+                #    1152 if "dino" in name else
+                #    1536 if "CLIP-convnext-L" in name else
+                #    3072 if "CLIP-convnext-XXL" in name else 1152
+                #    for name in config.mm_vision_tower_aux_list
+                #],
+                kv_dim_list=kv_dim_list,
                 hidden_dim=config.text_config.hidden_size, # hidden dimension
                 num_heads=config.text_config.num_attention_heads, # number of attention heads
                 num_layers=config.sva_layers, # number of hidden layers
+                query_num_list=config.query_num_list, # number of query tokens
             )
         else:
             self.connector = DetikzifyConnector(config) # initialize connector module
@@ -210,6 +220,10 @@ class DetikzifyCambrianModel(DetikzifyPreTrainedModel): # main model class for D
         reshaped_image_hidden_states = image_hidden_states.view(-1, vision_hidden_size)
         # cast to the dtype of the input_embeds to support quantized models
         reshaped_image_hidden_states = reshaped_image_hidden_states.to(inputs_embeds.dtype)
+
+        print("🔍 special_image_token_mask.sum():", special_image_token_mask.sum())
+        print("🔍 image_hidden_states shape:", image_hidden_states.shape)
+        
         new_inputs_embeds[special_image_token_mask] = reshaped_image_hidden_states
         return new_inputs_embeds
 
@@ -251,11 +265,8 @@ class DetikzifyCambrianModel(DetikzifyPreTrainedModel): # main model class for D
         past_seen_tokens = 0
         if use_cache:
             if past_key_values is None:
-                past_key_values = DynamicCache()  # during training / fine-tuning
-            elif hasattr(past_key_values, 'get_seq_length'):
-                past_seen_tokens = past_key_values.get_seq_length()
-            elif isinstance(past_key_values, (tuple, list)):
-                past_seen_tokens = len(past_key_values)
+                past_key_values = DynamicCache()  # initialize cache for past key values
+            past_seen_tokens = past_key_values.get_seq_length()
 
         if inputs_embeds is not None and input_ids is None and past_seen_tokens == 0:
             raise ValueError("When first calling the model, if input_embeds are passed, input_ids should not be None.")
@@ -275,11 +286,13 @@ class DetikzifyCambrianModel(DetikzifyPreTrainedModel): # main model class for D
                 image_hidden_states = self.vision_model(pixel_values.to(dtype=self.dtype)).last_hidden_state # single encoder for vision inputs
                 vision_hidden_states_list = [image_hidden_states]
             
-            if self.config.mm_projector_type == "sva": # if projector type is spatial vision aggregator
-                queries = torch.zeros(image_hidden_states.shape[0], 1, self.config.text_config.hidden_size).to(image_hidden_states.device) # initialize queries
-                image_hidden_states = self.sva(queries, [image_hidden_states]) # apply SVA to vision tokens
-            else: # if projector type is connector (not SVA)
-                image_hidden_states = self.connector(image_hidden_states) # project image hidden states to text hidden states using connector module
+            if self.config.mm_projector_type == "sva":  # SVA mode
+                total_queries = sum(self.config.query_num_list)
+                batch_size = vision_hidden_states_list[0].shape[0]
+                queries = torch.zeros(batch_size, total_queries, self.config.text_config.hidden_size).to(vision_hidden_states_list[0].device)
+                image_hidden_states = self.sva(queries, vision_hidden_states_list)
+            else:  # Fallback to standard connector
+                image_hidden_states = self.connector(image_hidden_states)
 
         elif image_hidden_states is not None: # if image hidden states are provided
             image_hidden_states = image_hidden_states.to(dtype=self.dtype, device=input_ids.device) # no need to project image hidden states to text hidden states
