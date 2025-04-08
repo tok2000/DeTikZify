@@ -13,8 +13,8 @@ from .base_encoder import BaseVisionTower, ProcessorWrapper
 
 def extract_res_interp(model_name):
     valid_model_prefixes = {
-        "CLIP-convnext-L":"/pfs/work7/workspace/scratch/ma_tikrause-my_workspace/huggingface_cache/hub/models--laion--CLIP-convnext_large_d_320.laion2B-s29B-b131K-ft-soup/snapshots/654d0f80ff73c58e7281a3ca7dc425589049e2e1",
-        "CLIP-convnext-XXL":"/pfs/work7/workspace/scratch/ma_tikrause-my_workspace/convnext_xxl_ckpt"
+        "CLIP-convnext-L":"/home/tikrause/.cache/huggingface/hub/models--laion--CLIP-convnext_large_d_320.laion2B-s29B-b131K-ft-soup/snapshots/654d0f80ff73c58e7281a3ca7dc425589049e2e1",
+        "CLIP-convnext-XXL":"/home/tikrause/.cache/huggingface/hub/models--laion--CLIP-convnext_xxlarge-laion2B-s34B-b82K-augreg-soup/snapshots/9f3e8ee3f383c672388d9178afe70af9e63ac9df"
     }
 
 
@@ -54,7 +54,7 @@ class CLIPConvNextTower(BaseVisionTower):
         base_model_name, res, interp = extract_res_interp(vision_tower)
         self.vision_tower_name = base_model_name
         self._image_size = res if res is not None else 1024
-        self._interp_size = interp  # default 256
+        self._interp_size = interp if interp is not None else 729  # default 729
         self._reduction = 32
 
         self.select_layer = getattr(args, "mm_vision_select_layer", 12)
@@ -168,23 +168,15 @@ class CLIPConvNextTower(BaseVisionTower):
             torch.Tensor: The output features from the vision tower after interpolation.
         """
         with torch.set_grad_enabled(self.unfreeze_mm_vision_tower):
-            image_features_stages = []
-            x = self.vision_tower.stem(images.to(device=self.device, dtype=self.dtype))
-            for stage in self.vision_tower.stages:
-                x = stage(x)
-                image_features_stages.append(x)
-            if not self.is_multi_stage:
-                image_features_stages = image_features_stages[-1:]
-            image_features_stages_rescaled = []
-            for image_features_single_stage in image_features_stages:
-                image_features_single_stage_rescaled = self.interpolate(image_features_single_stage)
-                image_features_stages_rescaled.append(image_features_single_stage_rescaled)
-            image_features = torch.cat(image_features_stages_rescaled, -1)
-
-            B, C, H, W = image_features.shape
-            image_features = image_features.view(B, C, H * W).permute(0, 2, 1).contiguous()
-            
-            return image_features
+            #print("[DEBUG]: ConvNext Tower is used.")
+            x = self.vision_tower(images.to(device=self.device, dtype=self.dtype))
+    
+            if x.ndim == 2:
+                # If the output is already pooled (e.g. [B, C]), reshape to mimic spatial output
+                x = x.unsqueeze(-1).unsqueeze(-1)  # -> [B, C, 1, 1]
+    
+            x = self.interpolate(x)
+            return x
 
     @property
     def image_size(self):

@@ -26,7 +26,12 @@ from transformers.tokenization_utils_base import (
     PreTokenizedInput,
     TextInput,
 )
+from transformers import AutoTokenizer, AutoImageProcessor, AutoModel
 from transformers.utils import logging
+from open_clip import image_transform, create_model
+import os
+
+from .encoder.base_encoder import ProcessorWrapper
 
 logger = logging.get_logger(__name__)
 
@@ -45,7 +50,8 @@ class DetikzifyCambrianProcessor(ProcessorMixin):
     image_processor_class = "AutoImageProcessor"
     tokenizer_class = "AutoTokenizer"
 
-    def __init__(self, image_processor, tokenizer=None, image_seq_len=300, image_token="<image>", mm_vision_tower_aux_list=None, query_num_list=None):
+    def __init__(self, image_processor, tokenizer=None, image_seq_len=300, image_token="<image>",
+                 mm_vision_tower_aux_list=None, query_num_list=None):
         if image_processor is None:
             raise ValueError("You need to specify an `image_processor`.")
         if tokenizer is None:
@@ -53,89 +59,107 @@ class DetikzifyCambrianProcessor(ProcessorMixin):
         if image_token not in tokenizer.vocab:
             raise ValueError(f"{image_token} needs to be added to the `tokenizer` vocabulary.")
 
-        self.image_token = image_token # store the image token
-        if image_seq_len is None:
-            if isinstance(self.vision_tower_list, list) and "query_num_list" in kwargs:
-                self.image_seq_len = sum(kwargs["query_num_list"])
-            else:
-                self.image_seq_len = 300
-        else:
-            self.image_seq_len = image_seq_len
+        super().__init__(image_processor, tokenizer)
+
+        self.image_token = image_token
+        self.image_seq_len = image_seq_len or 300
+
         self.vision_tower_list = mm_vision_tower_aux_list or ["siglip"]
         self.query_num_list = query_num_list or [4] * len(self.vision_tower_list)
 
-        super().__init__(image_processor, tokenizer) # initialize the processor calling the ProcessorMixin class
+        # Store processors and encoders per tower
+        self.vision_tower_processors = []
+        self.vision_tower_encoders = []
+
+        for tower in self.vision_tower_list:
+            if "convnext" in tower.lower():
+                transform = image_transform(image_size=1024, is_train=False)
+                processor = ProcessorWrapper(transform)
+                encoder = create_model(
+                    model_name="convnext_large_d_320",
+                    pretrained="laion2b_s29b_b131k_ft_soup",
+                    precision="fp32"
+                ).visual
+    
+            else:
+                processor = AutoImageProcessor.from_pretrained(tower)
+                encoder = AutoModel.from_pretrained(tower)
+    
+            self.vision_tower_processors.append(processor)
+            self.vision_tower_encoders.append(encoder)
 
     def __call__(
         self,
-        text: Union[TextInput, PreTokenizedInput, List[TextInput], List[PreTokenizedInput]] = None, # accept text or pre-tokenized input
-        images: ImageInput = None, # accept images
-        image_seq_len: Optional[int] = None, # override the image sequence length
-        add_bos_token: bool = None, # add beginning of sentence token
-        add_eos_token: bool = None, # add end of sentence token
-        return_image_latents: bool = False, # option to return image latents
-        **kwargs: Unpack[DetikzifyProcessorKwargs],
-    ) -> BatchEncoding:
-        output_kwargs = self._merge_kwargs( # merges keyword arguments with default tokenizer and image processor arguments
-            DetikzifyProcessorKwargs,
-            tokenizer_init_kwargs=self.tokenizer.init_kwargs,
-            **kwargs,
-        )
-        # Temporary fix for "padding_side" in init_kwargs
-        output_kwargs["text_kwargs"].pop("padding_side", None) # remove padding_side from text_kwargs
-
-        if images is None: # if no images are provided, raise an error
+        text: Union[str, List[str]] = None,
+        images: Union[List, torch.Tensor] = None,
+        image_seq_len: Optional[int] = None,
+        add_bos_token: bool = False,
+        add_eos_token: bool = False,
+        return_image_latents: bool = False,
+        return_tensors: Optional[str] = None,
+        **kwargs
+    ) -> BatchFeature:
+        if images is None:
             raise ValueError("`images` are expected as arguments to a `DetikzifyProcessor` instance.")
-        else:
-            images = make_list_of_images(images) # convert images to a list of images to enable batch processing
-        if text is None: # if no text is provided, default to an empty string
+        images = make_list_of_images(images)
+
+        if text is None:
             text = len(images) * [""]
-        elif isinstance(text, str): # if text is a single string, convert it to a list of strings
+        elif isinstance(text, str):
             text = [text]
-        if len(images) != len(text): # ensure equal number of images and text prompts
+        if len(images) != len(text):
             raise ValueError(
                 f"Received {len(images)} images for {len(text)} prompts. Each prompt should be associated with an image."
             )
 
         prompt_strings = []
         for prompt in text:
-            assert self.image_token not in prompt, "Image tokens are added by the processor!"
-            if add_bos_token: # add beginning of sentence token
+            if self.image_token in prompt:
+                raise ValueError("Image tokens are added by the processor automatically.")
+            if add_bos_token:
                 prompt = self.tokenizer.bos_token + prompt
-            if add_eos_token: # add end of sentence token
+            if add_eos_token:
                 prompt += self.tokenizer.eos_token
-            image_seq_len = image_seq_len if image_seq_len is not None else self.image_seq_len
-            prompt_strings.append((self.image_token * image_seq_len) + prompt) # append image token to prompt
+            seq_len = image_seq_len if image_seq_len is not None else self.image_seq_len
+            prompt_strings.append((self.image_token * seq_len) + prompt)
 
-        image_inputs = self.image_processor(images=images, **output_kwargs["images_kwargs"]) # process images
-        text_inputs = self.tokenizer(text=prompt_strings, **output_kwargs["text_kwargs"]) # tokenize text prompts
+        text_inputs = self.tokenizer(prompt_strings, return_tensors=return_tensors, padding=True, truncation=True)
 
         if return_image_latents:
-            vision_latents = self.extract_vision_latents(images) # extract vision latents
-            return BatchFeature(data={**text_inputs, "vision_latents": vision_latents}) # return combined image and text inputs
+            vision_latents = self.extract_vision_latents(images)
+            return BatchFeature(data={**text_inputs, "vision_latents": vision_latents})
 
-        return BatchFeature(data={**image_inputs, **text_inputs}) # return combined image and text inputs
+        image_inputs = self.image_processor(images=images, return_tensors=return_tensors)
+        return BatchFeature(data={**text_inputs, **image_inputs})
+
+    def extract_vision_latents(self, images):
+        images = make_list_of_images(images)
+        vision_latents = []
+
+        for processor, encoder in zip(self.vision_tower_processors, self.vision_tower_encoders):
+            pixel_values = processor(images=images, return_tensors="pt").pixel_values.to(encoder.device)
+            with torch.no_grad():
+                features = encoder(pixel_values).last_hidden_state
+            vision_latents.append(features)
+            
+        return vision_latents
+
+    def to_dict(self):
+        base_dict = super().to_dict()
+        base_dict.update({
+            "image_token": self.image_token,
+            "image_seq_len": self.image_seq_len,
+            "query_num_list": self.query_num_list,
+            "mm_vision_tower_aux_list": self.vision_tower_list,
+        })
+        return base_dict
     
-    def extract_vision_latents(self, images: ImageInput): # extract vision latents
-        image_features = []
-        images = make_list_of_images(images) # convert images to a list of images to enable batch processing
-
-        if isinstance(self.vision_tower_list, list) and len(self.vision_tower_list) > 1:
-            for vision_tower in self.vision_tower_list:
-                vision_features = self.image_processor(images=images, return_tensors=True) # process images
-                image_features.append(vision_features)
-            return torch.cat(image_features, dim=-1) # concatenate vision features along the last dimension
-        else:
-            return self.image_processor(images=images, return_tensors=False) # single vision tower case
-
-    def batch_decode(self, *args, **kwargs): # decode batch of inputs
+    def batch_decode(self, *args, **kwargs):
         return self.tokenizer.batch_decode(*args, **kwargs)
 
-    def decode(self, *args, **kwargs): # decode single input
+    def decode(self, *args, **kwargs):
         return self.tokenizer.decode(*args, **kwargs)
 
-    @property # ensures the model receives all required inputs
-    def model_input_names(self): # returns a list of all input names required by the model
-        tokenizer_input_names = self.tokenizer.model_input_names # get input names from tokenizer
-        image_processor_input_names = self.image_processor.model_input_names # get input names from image processor
-        return list(dict.fromkeys(tokenizer_input_names + image_processor_input_names))
+    @property
+    def model_input_names(self):
+        return list(dict.fromkeys(self.tokenizer.model_input_names + self.image_processor.model_input_names))

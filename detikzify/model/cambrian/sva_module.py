@@ -87,12 +87,12 @@ class SpatialVisionAggregator(nn.Module):
 
 
     # queries: latent tokens that attend to relevant features from the vision features
-    # vision_latents_attention_mask_list: raw image features extracted from multiple vision encoders
+    # vision_latents_list: raw image features extracted from multiple vision encoders
     def forward(self, queries, vision_latents_list):
-        print("Number of Vision Towers Used:", len(vision_latents_list))
+        #print("Number of Vision Towers Used:", len(vision_latents_list))
         
-        for i, vision_latents in enumerate(vision_latents_list):
-            print(f"Processing Vision Latents {i+1} of shape {vision_latents.shape}")
+        #for i, vision_latents in enumerate(vision_latents_list):
+        #    print(f"Processing Vision Latents {i+1} of shape {vision_latents.shape}")
 
         split_queries = torch.split(queries, self.query_num_list, dim=1)
         all_queries = []

@@ -113,6 +113,11 @@ class DetikzifyCambrianConfig(PretrainedConfig): # store the overall configurati
         if not isinstance(self.mm_vision_tower_aux_list, list):
             raise ValueError("mm_vision_tower_aux_list must be a list of vision tower names")
 
+        import traceback
+        print("[DEBUG] DetikzifyCambrianConfig initialized from:")
+        traceback.print_stack()
+
+        print(f"mm_vision_tower_aux_list: {self}")  # Debugging
         print(f"mm_vision_tower_aux_list: {self.mm_vision_tower_aux_list}")  # Debugging
         print(f"query_num_list: {query_num_list}")  # Debugging
 
@@ -182,3 +187,7 @@ class DetikzifyCambrianConfig(PretrainedConfig): # store the overall configurati
         self.concat_factor = concat_factor
 
         super().__init__(**kwargs, tie_word_embeddings=tie_word_embeddings)
+
+    def _get_non_default_generation_parameters(self):
+        # Avoid triggering unwanted default config reconstruction
+        return {}

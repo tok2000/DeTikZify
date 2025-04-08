@@ -43,25 +43,8 @@ def load(model_name_or_path, modality_projector=None, is_v1=False, **kwargs):
     processor = AutoProcessor.from_pretrained(model_name_or_path)
     model = AutoModelForVision2Seq.from_pretrained(model_name_or_path, **kwargs)
 
-    # Check if model has multiple encoders
-    if len(model.config.mm_vision_tower_aux_list) > 1:
-        model.sva = SpatialVisionAggregator(
-            q_dim=model.config.text_config.hidden_size,
-            kv_dim_list=[
-                1024 if "siglip" in enc
-                else 1152 if "dino" in enc
-                else 1536 if "CLIP-convnext_l" in enc
-                else 3072 if "CLIP-convnext_xxl" in enc
-                else 1152
-                for enc in model.config.mm_vision_tower_aux_list
-            ], 
-            hidden_dim=model.config.text_config.hidden_size,
-            num_heads=model.config.text_config.num_attention_heads,
-            num_layers=model.config.sva_layers
-        )
-    else:
-        model.sva = None  # Disable SVA for single encoder setups
-
+    # deleted sva init here after 17246
+    
     if modality_projector is not None and model.sva is None: # Load modality projector only if SVA is not used
         if is_remote_url(modality_projector):
             modality_projector = DownloadManager().download(modality_projector)
