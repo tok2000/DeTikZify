@@ -12,7 +12,7 @@ from transformers.utils.logging import enable_explicit_format, set_verbosity_inf
 
 from detikzify.dataset import load_dataset
 from detikzify.model import load
-from detikzify.train import train
+from detikzify.train import curriculum_train
 
 def parse_args():
     argument_parser = ArgumentParser(
@@ -28,6 +28,18 @@ def parse_args():
     )
     argument_parser.add_argument("--datikz",
         required=True,
+        help="path to the DaTikZ train split processed by the ./sketchify script (in parquet format)",
+    )
+    argument_parser.add_argument("--datikz0",
+        help="path to the DaTikZ train split processed by the ./sketchify script (in parquet format)",
+    )
+    argument_parser.add_argument("--datikz1",
+        help="path to the DaTikZ train split processed by the ./sketchify script (in parquet format)",
+    )
+    argument_parser.add_argument("--datikz2",
+        help="path to the DaTikZ train split processed by the ./sketchify script (in parquet format)",
+    )
+    argument_parser.add_argument("--datikz3",
         help="path to the DaTikZ train split processed by the ./sketchify script (in parquet format)",
     )
     argument_parser.add_argument("--sketch_ratio",
@@ -66,15 +78,22 @@ if __name__ == "__main__":
     uncompiled_model = model # modified after _orig_mod problem
     model = torch.compile(model)
 
-    datikz: Dataset = load_from_disk(args.datikz) # type: ignore
-    datikz = datikz.select_columns(["image", "code"]).rename_column("code", "text")
+    datikz_list = [args.datikz0, args.datikz1, args.datikz2, args.datikz3, args.datikz]
+    dataset_list = []
+    for datikz_elem in datikz_list:
+        if datikz_elem is not None:
+            datikz: Dataset = load_from_disk(datikz_elem)
+            try:
+                datikz = datikz.select_columns(["image", "code"]).rename_column("code", "text")
+            except:
+                datikz = datikz.select_columns(["image", "text"])
+            dataset_list.append(datikz)
 
-    train(
+    curriculum_train(
         model=model,
         uncompiled_model=uncompiled_model, # modified after _orig_mod problem
         processor=processor,
-        dataset=datikz,
-        #sketch_ratio=args.sketch_ratio,
+        dataset_list=dataset_list,
         sketch_ratio=0.0,
         output_dir=join(args.output, basename(model.config.name_or_path)), # type: ignore
         gradient_checkpointing=args.gradient_checkpointing,

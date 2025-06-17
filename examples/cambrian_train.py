@@ -1,7 +1,10 @@
 #!/usr/bin/env -S torchrun --nproc_per_node gpu
 
 import torch._dynamo
+torch._dynamo.config.verbose = False # after 21443
 torch._dynamo.config.optimize_ddp = False
+torch._dynamo.config.suppress_errors = True # after 16982
+torch._dynamo.disable() # after 21443
 
 from argparse import ArgumentParser
 from os.path import basename, join, exists
@@ -10,13 +13,13 @@ from datasets import Dataset, load_from_disk
 from transformers import set_seed
 from transformers.utils.logging import enable_explicit_format, set_verbosity_info
 
-from detikzify.dataset import load_dataset
-from detikzify.model import load
-from detikzify.train import train
+from detikzify.cambrian.dataset import load_dataset
+from detikzify.cambrian.model.cambrian_v3 import load
+from detikzify.cambrian.train import train
 
 def parse_args():
     argument_parser = ArgumentParser(
-        description="Fine-tune DeTikZify on DaTikZ."
+        description="Fine-tune the DeTikZify-Cambrian model on DaTikZ."
     )
     argument_parser.add_argument("--base_model",
         required=True,
@@ -45,10 +48,6 @@ def parse_args():
         action="store_true",
         help="use gradient checkpointing",
     )
-    argument_parser.add_argument("--freeze_vision_encoder",
-        action="store_true",
-        help="possibility to freeze the vision encoder",
-    )
 
     return argument_parser.parse_args()
 
@@ -64,7 +63,8 @@ if __name__ == "__main__":
     model.gradient_checkpointing_enable()
 
     uncompiled_model = model # modified after _orig_mod problem
-    model = torch.compile(model)
+    model = torch.compile(model, backend="inductor") # changed after 17179, again after 21508, again after 21516, deleted after 21525, added after 21528
+    model.config.use_flash_attention = False # added after 17267
 
     datikz: Dataset = load_from_disk(args.datikz) # type: ignore
     datikz = datikz.select_columns(["image", "code"]).rename_column("code", "text")
@@ -74,10 +74,8 @@ if __name__ == "__main__":
         uncompiled_model=uncompiled_model, # modified after _orig_mod problem
         processor=processor,
         dataset=datikz,
-        #sketch_ratio=args.sketch_ratio,
-        sketch_ratio=0.0,
+        sketch_ratio=args.sketch_ratio,
         output_dir=join(args.output, basename(model.config.name_or_path)), # type: ignore
         gradient_checkpointing=args.gradient_checkpointing,
-        deepspeed=args.deepspeed,
-        freeze_vision_enc=args.freeze_vision_encoder,
+        deepspeed=args.deepspeed
     )

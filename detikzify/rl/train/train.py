@@ -43,7 +43,7 @@ class ImageSketchDataset(Dataset, TrainerCallback):
     def tokenize(self, batch):
         for idx, sketches in enumerate(batch['image']):
             if isinstance(batch["image"][idx], Image.Image):  # Check if it's a valid image
-                batch["image"][idx] = batch["image"][idx].convert("RGB")  # Ensure RGB format
+            	batch["image"][idx] = batch["image"][idx].convert("RGB")  # Ensure RGB format
 
         return tokenize(
             batch=batch,

@@ -10,7 +10,7 @@ from os import getenv
 from os.path import isfile, join
 from time import time
 
-from datasets import load_dataset
+from datasets import load_dataset, load_from_disk
 from numpy import array
 from scipy.stats.mstats import winsorize
 from torch import bfloat16, distributed as dist, float16
@@ -179,7 +179,7 @@ if __name__ == "__main__":
     dist.init_process_group(timeout=timedelta(days=3))
     args = parse_args()
 
-    trainset = load_dataset(args.trainset, split="train")
+    trainset = load_from_disk(args.trainset)
     testset = load_dataset("parquet", data_files={"test": args.testset}, split="test").sort("caption") # type: ignore
 
     predictions = defaultdict(list)

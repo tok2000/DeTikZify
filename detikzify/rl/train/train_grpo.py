@@ -18,6 +18,8 @@ from .detikzify_grpo import DetikzifyGRPOTrainer
 logger = logging.get_logger("grpo_trainer")
 
 WORLD_SIZE = int(os.environ.get("WORLD_SIZE", 1)) # to be clarified
+local_rank = int(os.environ.get("LOCAL_RANK", 0))
+device = torch.device("cuda", local_rank) if torch.cuda.is_available() else torch.device("cpu")
 
 def rl_tokenize(
     batch,
@@ -62,7 +64,7 @@ class ImageRLDataset(ImageSketchDataset):
     def tokenize(self, batch):
         for idx, sketches in enumerate(batch['image']):
             if isinstance(batch["image"][idx], Image.Image):  # Check if it's a valid image
-                batch["image"][idx] = batch["image"][idx].convert("RGB")  # Ensure RGB format
+            	batch["image"][idx] = batch["image"][idx].convert("RGB")  # Ensure RGB format
 
         return rl_tokenize(
             batch=batch,
@@ -110,7 +112,7 @@ class RewardFunction:
             self.reward_model.reset()
             rewards.append(reward)
         return rewards
-            
+    
     
 def train(
     output_dir: str,
@@ -119,12 +121,13 @@ def train(
     dataset,
     overwrite=False,
     deepspeed=None,
-    batch_size: int = 16,
+    batch_size: int = 8,
     micro_batch_size: int = 1,
     num_epochs: int = 1,
-    learning_rate: float = 1e-5,
+    learning_rate: float = 1e-6,
     gradient_checkpointing: bool = False,
     freeze_vision_enc: bool = False,
+    num_gen: int = 8,
 ):
     gradient_accumulation_steps = batch_size // micro_batch_size
     if WORLD_SIZE != 1:
@@ -152,6 +155,7 @@ def train(
 
     # freeze the vision encoder parameters
     if freeze_vision_enc:
+        logger.info("The vision encoder was frozen. To unfreeze, please start training with --freeze_vision_encoder=False.")
         for _, param in model.model.vision_model.named_parameters():
             param.requires_grad = False
 
@@ -173,15 +177,17 @@ def train(
         logging_steps=10,
         lr_scheduler_type="cosine",
         optim="adamw_torch" if deepspeed else "adamw_torch_fused",
-        ddp_find_unused_parameters=False,
+        ddp_find_unused_parameters=True,
         remove_unused_columns=False,
-        save_strategy="epoch",
+        save_strategy="steps",
+        save_steps=250,
         report_to="none",
         save_total_limit=1,
         output_dir=output_dir,
         deepspeed=deepspeed,
 
-        max_completion_length=2048
+        max_completion_length=2048,
+        num_generations=num_gen,
     )
 
     trainer = DetikzifyGRPOTrainer(
@@ -191,6 +197,10 @@ def train(
         train_dataset=dataset,
         callbacks=[SplitEpochSaveCallback(step_size=0.25)],
     )
+
+    import numpy.core.multiarray
+    import torch.serialization
+    torch.serialization.add_safe_globals({numpy.core.multiarray._reconstruct})
 
     trainer.train(resume_from_checkpoint=last_checkpoint)
 

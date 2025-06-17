@@ -37,6 +37,16 @@ def parse_args():
         action="store_true",
         help="possibility to freeze the vision encoder",
     )
+    argument_parser.add_argument("--batch_size",
+        type=int,
+        default=8,
+        help="batch size for training (default: 8)",
+    )
+    argument_parser.add_argument("--num_completions",
+        type=int,
+        default=8,
+        help="number of completions to generate for each input (default: 8)",
+    )
 
     return argument_parser.parse_args()
 
@@ -46,23 +56,23 @@ if __name__ == "__main__":
     set_seed(0)
 
     args = parse_args()
-    model, processor = load(args.base_model, ignore_mismatched_sizes=True)
+    model, processor = load(args.base_model)
 
     model.gradient_checkpointing_enable()
     model.config.use_flash_attention = False
 
     dataset: Dataset = load_from_disk(args.datikz)
-    dataset = dataset.select_columns(["image", "code"]).rename_column("code", "text")
+    #dataset = dataset.select_columns(["image", "code"]).rename_column("code", "text")
 
     rl_type = args.rl_type.lower()
     if rl_type == "grpo":
         from detikzify.rl.train.train_grpo import train
-    elif rl_type == "ppo":
-        from detikzify.rl.train.train_ppo import train
+    elif rl_type == "dpo":
+        from detikzify.rl.train.train_dpo import train
     else:
         raise ValueError(
             f"The reinforcement learning method ({rl_type}) is not implemented yet. "
-            "Use `grpo` or `ppo` to overcome."
+            "Use `grpo` or `dpo` to overcome."
         )
 
     train(
@@ -73,4 +83,6 @@ if __name__ == "__main__":
         gradient_checkpointing=args.gradient_checkpointing,
         deepspeed=args.deepspeed,
         freeze_vision_enc=args.freeze_vision_encoder,
+        batch_size=args.batch_size,
+        num_gen=args.num_completions,
     )

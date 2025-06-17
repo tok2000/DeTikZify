@@ -39,7 +39,7 @@ from transformers.utils import is_datasets_available, is_peft_available
 from trl.data_utils import apply_chat_template, is_conversational, maybe_apply_chat_template
 from trl.extras.profiling import profiling_context, profiling_decorator
 from trl.extras.vllm_client import VLLMClient
-from trl.import_utils import is_liger_kernel_available, is_rich_available, is_vllm_available
+from trl.import_utils import is_liger_kernel_available, is_vllm_available
 from trl.models import create_reference_model, prepare_deepspeed, unwrap_model_for_generation
 from trl.trainer.callbacks import SyncRefModelCallback
 from trl.trainer.grpo_config import GRPOConfig
@@ -378,6 +378,7 @@ class DetikzifyGRPOTrainer(GRPOTrainer):
                 min_p=self.min_p,
                 repetition_penalty=self.repetition_penalty,
                 cache_implementation=args.cache_implementation,
+                num_return_sequences=self.num_generations, # ADDED after 30654
                 #low_memory=True, # MAYBE to save memory consumption
             )
 
@@ -572,6 +573,7 @@ class DetikzifyGRPOTrainer(GRPOTrainer):
                 #print(self.processing_class.decode(prompt_ids[0], skip_special_tokens=False))
                 #print("GENERATION prompts[0,:20] =", prompt_ids[0, :20].tolist())
                 #print("GENERATION PROMPTS decoded[0] =", self.processing_class.decode(prompt_ids[0], skip_special_tokens=False))
+                
                 prompt_completion_ids = unwrapped_model.generate( # CHANGED to update correct model generation logic
                 #    prompt_ids, attention_mask=prompt_mask, generation_config=self.generation_config
                 #)
@@ -628,6 +630,11 @@ class DetikzifyGRPOTrainer(GRPOTrainer):
             truncated_completions = ~is_eos.any(dim=1)
             completion_mask = completion_mask * (~truncated_completions).unsqueeze(1).int()
 
+        G = self.generation_config.num_return_sequences
+        if G > 1: # ADDED the following if statement after 30844 to enable batch compatibility
+            # repeat each row of prompt_mask G times along the batch dimension
+            prompt_mask = prompt_mask.repeat_interleave(G, dim=0)  # (B*G, P)
+            
         # Concatenate prompt_mask with completion_mask for logit computation
         attention_mask = torch.cat([prompt_mask, completion_mask], dim=1)  # (B, P+C)
 
@@ -667,10 +674,14 @@ class DetikzifyGRPOTrainer(GRPOTrainer):
 
         #for c in completions:
         #    print(c)
-        
 
-        prompts = [""] * len(completions) # ADDED, but not sure yet
-        rewards_per_func = torch.zeros(len(prompts), len(self.reward_funcs), device=device)
+        #B = len(inputs["image"])
+        #N = len(completions)
+        #G = N // B
+        
+        prompts = [""] * len(completions)
+        rewards_per_func = torch.zeros(len(completions), len(self.reward_funcs), device=device)
+        
         for i, (reward_func, reward_processing_class, reward_func_name) in enumerate(
             zip(self.reward_funcs, self.reward_processing_classes, self.reward_func_names)
         ):
@@ -692,14 +703,17 @@ class DetikzifyGRPOTrainer(GRPOTrainer):
                 else:
                     # Repeat all input columns (but "prompt" and "completion") to match the number of generations
                     #print(inputs)
-                    keys = [key for key in inputs.keys() if key not in ["prompt", "completion"]] # CHANGED from inputs[0]
+                    #keys = [key for key in inputs.keys() if key not in ["prompt", "completion"]] # CHANGED from inputs[0]
 
                     # ADDED to enable the desired key properties
                     reward_kwargs = {}
-                    for k in keys:
-                        v = inputs[k]
-                        if torch.is_tensor(v):
-                            reward_kwargs[k] = list(v.cpu())
+                    for k, v in inputs.items(): # CHANGED after 30891
+                        if k in ("prompt", "completion"):
+                            continue
+                        if isinstance(v, list) and len(v) == len(inputs["image"]):
+                            reward_kwargs[k] = v * self.num_generations
+                        elif torch.is_tensor(v) and v.size(0) == len(inputs["image"]):
+                            reward_kwargs[k] = v.repeat_interleave(self.num_generations, dim=0)
                         else:
                             reward_kwargs[k] = v
                             
@@ -735,6 +749,9 @@ class DetikzifyGRPOTrainer(GRPOTrainer):
         # Compute grouped-wise rewards
         mean_grouped_rewards = rewards.view(-1, self.num_generations).mean(dim=1)
         std_grouped_rewards = rewards.view(-1, self.num_generations).std(dim=1)
+
+        #print(mean_grouped_rewards)
+        #print(std_grouped_rewards)
 
         # Normalize the rewards to compute the advantages
         mean_grouped_rewards = mean_grouped_rewards.repeat_interleave(self.num_generations, dim=0)

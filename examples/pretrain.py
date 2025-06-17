@@ -1,8 +1,26 @@
 #!/usr/bin/env -S torchrun --nproc_per_node gpu
+
+import os
+import torch
+
+# Disable TorchInductor Compilation
+os.environ["TORCH_COMPILE_DISABLE"] = "1"
+
+# Disable Flash Attention if it conflicts with gradient checkpointing
+os.environ["DISABLE_FLASH_ATTN"] = "1"
+os.environ["TORCH_USE_FLASH_ATTENTION"] = "0"
+os.environ["TORCH_USE_CUDA_DSA"] = "1"  # Helps with dynamic shapes
+
+# Ensure PyTorch uses standard CUDA instead of inductor optimizations
+torch._dynamo.config.suppress_errors = True
+torch._dynamo.config.optimize_ddp = False
+
+
 from argparse import ArgumentParser
 from functools import partial
 from itertools import chain
 from os.path import basename, join
+import torch
 
 from datasets import Dataset, IterableDataset
 from transformers import set_seed
@@ -26,6 +44,8 @@ def preprocess(batch, size):
                     text=text,
                     image=convert(expand(cil_pair['image'], size, do_trim=True), "png")
                 )
+
+
 
 def parse_args():
     argument_parser = ArgumentParser(
@@ -60,7 +80,12 @@ if __name__ == "__main__":
     set_seed(0)
 
     args = parse_args()
-    model, processor = load(args.base_model)
+    model, processor = load(args.base_model, ignore_mismatched_sizes=True)
+    
+    
+    model.config.use_cache = False  # Disable caching to avoid conflicts with gradient checkpointing
+    torch.nn.init.xavier_uniform_(model.model.connector.modality_projection.proj.weight)
+
 
     arxivcap: IterableDataset = load_dataset("MMInstruction/ArxivCap", split="train", streaming=True) # type: ignore
     arxivcap = arxivcap.shuffle(0).map(
@@ -70,6 +95,31 @@ if __name__ == "__main__":
         fn_kwargs=dict(size=model.config.vision_config.image_size),
     )
 
+    import torch._dynamo
+    torch._dynamo.config.optimize_ddp = False  # Disable DDP optimization
+
+    # Check if tokens are out-of-range before training
+    from torch.utils.data import DataLoader
+    
+    def custom_collate_fn(batch):
+        """Ensures that PIL images are kept as they are, but text is tokenized."""
+        processed_batch = {"image": [], "text": []}
+    
+        for item in batch:
+            processed_batch["image"].append(item["image"])  # Keep PIL images as is
+            processed_batch["text"].append(item["text"])  # Collect text
+    
+        return processed_batch
+
+    dataloader = DataLoader(
+        Dataset.from_generator(
+            generator=partial(iter, arxivcap.take(args.size)),
+            features=arxivcap.features,
+        ),
+        batch_size=4,
+        collate_fn=custom_collate_fn  # Use the custom function
+    )
+    
     pretrain(
         model=model,
         processor=processor,
@@ -79,5 +129,6 @@ if __name__ == "__main__":
         dataset=Dataset.from_generator(
             generator=partial(iter, arxivcap.take(args.size)),
             features=arxivcap.features,
-        )
+        ),
+        batch_size=4  # Reduce this if needed
     )
