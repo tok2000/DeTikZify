@@ -1,11 +1,11 @@
 from transformers import (
     AutoModelForCausalLM, AutoTokenizer, AutoModel, AutoImageProcessor, AutoConfig
 )
-from detikzify.cambrian.model.cambrian_c3 import (
+from detikzify.cambrian.model.cambrian_concat import (
     DetikzifyCambrianConfig, DetikzifyCambrianForConditionalGeneration, DetikzifyCambrianProcessor
 )
-from detikzify.cambrian.model.cambrian_c3.encoder import ClipVisionTower, SiglipVisionTower, DinoVisionTower, CLIPConvNextTower
-from detikzify.cambrian.model.cambrian_c3 import load
+from detikzify.cambrian.model.cambrian_concat.encoder import ClipVisionTower, SiglipVisionTower, DinoVisionTower, CLIPConvNextTower
+from detikzify.cambrian.model.cambrian_concat import load
 import torch
 
 from types import SimpleNamespace
@@ -16,17 +16,17 @@ sys.stdout.reconfigure(encoding='utf-8')
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-# 🔹 Load the text model (LLaMA)
+# Load the text model (LLaMA)
 print("Loading LLaMA model...")
 text_model = AutoModel.from_pretrained("meta-llama/Llama-3.2-1B")
 text_model_lm_head = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-3.2-1B").lm_head
 tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-1B")
 
-# 🔹 Define the list of vision encoders
-vision_encoders = ["openai/clip-vit-large-patch14-336", "google/siglip-so400m-patch14-384", "facebook/dinov2-base"]
+# Define the list of vision encoders
+vision_encoders = ["google/siglip-so400m-patch14-384", "facebook/dinov2-base"]
 MODEL_MAX_LENGTH = 2048
 
-# 🔹 Load vision encoders once (to be shared between model and processor)
+# Load vision encoders once (to be shared between model and processor)
 print(f"Loading vision encoders: {vision_encoders}")
 loaded_vision_encoders = []
 
@@ -49,7 +49,7 @@ for vision_encoder in vision_encoders:
 
     loaded_vision_encoders.append(encoder)
 
-# 🔹 Load Detikzify model configuration
+# Load Detikzify model configuration
 print("Loading Detikzify model configuration...")
 llama_config = AutoConfig.from_pretrained("meta-llama/Llama-3.2-1B")
 config = DetikzifyCambrianConfig(
@@ -61,11 +61,11 @@ print(f"After config load: vision_towers={config.vision_towers}")
 torch.manual_seed(config.seed)
 torch.cuda.manual_seed_all(config.seed)
 
-# 🔹 Initialize Detikzify model with pre-loaded encoders
+# Initialize Detikzify model with pre-loaded encoders
 print("Initializing Detikzify model...")
 detikzify_model = DetikzifyCambrianForConditionalGeneration(config, preloaded_vision_encoders=loaded_vision_encoders)
 
-# 🔹 Load Detikzify processor with pre-loaded encoders
+# Load Detikzify processor with pre-loaded encoders
 detikzify_processor = DetikzifyCambrianProcessor(
     image_processor=None,  # Will be set internally by the processor
     tokenizer=tokenizer,
@@ -76,38 +76,38 @@ detikzify_processor = DetikzifyCambrianProcessor(
     original_tower_names=vision_encoders  # Pass original clean names
 )
 
-# 🔹 Assign text model
+# Assign text model
 detikzify_model.model.text_model.load_state_dict(text_model.state_dict(), strict=False)
 detikzify_model.lm_head = text_model_lm_head
 
-# 🔹 Update config with text model details
+# Update config with text model details
 for key, value in vars(text_model.config).items():
     setattr(detikzify_model.config.text_config, key, value)
 
-# 🔹 Ensure correct `pad_token_id` before assigning
+# Ensure correct `pad_token_id` before assigning
 VALID_PAD_ID = 128004  # Set to an existing valid ID
 
-# 🔹 Step 1: Remove `[PAD]` if it's assigned incorrectly at 128256
+# Step 1: Remove `[PAD]` if it's assigned incorrectly at 128256
 if tokenizer.pad_token_id == 128256:
     print(f"Removing previous PAD token at ID {tokenizer.pad_token_id}")
     del tokenizer.special_tokens_map['pad_token']  # Remove from special tokens
     tokenizer.pad_token_id = None  # Unset pad token
 
-# 🔹 Step 2: Explicitly set `[PAD]` to `128004`
+# Step 2: Explicitly set `[PAD]` to `128004`
 tokenizer.add_special_tokens({'pad_token': '<|finetune_right_pad_id|>'})
 tokenizer.pad_token_id = VALID_PAD_ID
 tokenizer.model_max_length = MODEL_MAX_LENGTH
 detikzify_model.config.pad_token_id = tokenizer.pad_token_id  # Ensure model config reflects this
 
-# 🔹 Assign tokenizer and image processor
+# Assign tokenizer and image processor
 #detikzify_processor.tokenizer = tokenizer
 #detikzify_processor.image_processor = image_processors
 
-# 🔹 Save the model and processor
-detikzify_model.save_pretrained(save_directory="detikzify-cambrian-concat-1B-clip_siglip_dino")
-detikzify_processor.save_pretrained(save_directory="detikzify-cambrian-concat-1B-clip_siglip_dino")
-config.save_pretrained(save_directory="detikzify-cambrian-concat-1B-clip_siglip_dino")
-tokenizer.save_pretrained(save_directory="detikzify-cambrian-concat-1B-clip_siglip_dino")
+# Save the model and processor
+detikzify_model.save_pretrained(save_directory="detikzify-cambrian-concat-1B-siglip_dino")
+detikzify_processor.save_pretrained(save_directory="detikzify-cambrian-concat-1B-siglip_dino")
+config.save_pretrained(save_directory="detikzify-cambrian-concat-1B-siglip_dino")
+tokenizer.save_pretrained(save_directory="detikzify-cambrian-concat-1B-siglip_dino")
 
 
 img1 = Image.open("DFA_example_multiplies_of_3.svg.png").convert("RGB")

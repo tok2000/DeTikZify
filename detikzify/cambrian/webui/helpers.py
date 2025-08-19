@@ -7,7 +7,7 @@ from tempfile import mkstemp
 import gradio as gr
 
 from ..infer import TikzDocument
-from ..model.cambrian_v3 import load
+from ..model.cambrian_concat import load
 
 def to_svg(
     tikzdoc: TikzDocument,
