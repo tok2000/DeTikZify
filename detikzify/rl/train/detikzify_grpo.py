@@ -38,8 +38,7 @@ from transformers.utils import is_datasets_available, is_peft_available
 
 from trl.data_utils import apply_chat_template, is_conversational, maybe_apply_chat_template
 from trl.extras.profiling import profiling_context, profiling_decorator
-from trl.extras.vllm_client import VLLMClient
-from trl.import_utils import is_liger_kernel_available, is_vllm_available
+from trl.import_utils import is_liger_kernel_available
 from trl.models import create_reference_model, prepare_deepspeed, unwrap_model_for_generation
 from trl.trainer.callbacks import SyncRefModelCallback
 from trl.trainer.grpo_config import GRPOConfig
@@ -343,44 +342,22 @@ class DetikzifyGRPOTrainer(GRPOTrainer):
         # it's safer to set it in all cases.
         set_seed(args.seed, device_specific=True)
 
-        if self.use_vllm:
-            if not is_vllm_available():
-                raise ImportError(
-                    "vLLM is not available and `use_vllm` is set to True. Please install vLLM with "
-                    "`pip install vllm` to use it."
-                )
-
-            if self.accelerator.is_main_process:
-                self.vllm_client = VLLMClient(
-                    args.vllm_server_host, args.vllm_server_port, connection_timeout=args.vllm_server_timeout
-                )
-                self.vllm_client.init_communicator()
-
-            # vLLM specific sampling arguments
-            self.guided_decoding_regex = args.vllm_guided_decoding_regex
-
-            self._last_loaded_step = -1  # tag to avoid useless loading during grad accumulation
-
-            # When using vLLM, the main process is responsible for loading the model weights. This can cause process
-            # desynchronization and seems to lead to DeepSpeed hanging during initialization. To prevent this, we
-            # synchronize all processes after vLLM has been fully initialized.
-            self.accelerator.wait_for_everyone()
-        else:
-            self.generation_config = GenerationConfig(
-                max_new_tokens=self.max_completion_length,
-                do_sample=True,
-                pad_token_id=processing_class.tokenizer.pad_token_id, # CHANGED into .tokenizer
-                bos_token_id=processing_class.tokenizer.bos_token_id, # CHANGED into .tokenizer
-                eos_token_id=processing_class.tokenizer.eos_token_id, # CHANGED into .tokenizer
-                temperature=self.temperature,
-                top_p=self.top_p,
-                top_k=self.top_k,
-                min_p=self.min_p,
-                repetition_penalty=self.repetition_penalty,
-                cache_implementation=args.cache_implementation,
-                num_return_sequences=self.num_generations, # ADDED after 30654
-                #low_memory=True, # MAYBE to save memory consumption
-            )
+        # Always use regular generation for multimodal models
+        self.generation_config = GenerationConfig(
+            max_new_tokens=self.max_completion_length,
+            do_sample=True,
+            pad_token_id=processing_class.tokenizer.pad_token_id, # CHANGED into .tokenizer
+            bos_token_id=processing_class.tokenizer.bos_token_id, # CHANGED into .tokenizer
+            eos_token_id=processing_class.tokenizer.eos_token_id, # CHANGED into .tokenizer
+            temperature=self.temperature,
+            top_p=self.top_p,
+            top_k=self.top_k,
+            min_p=self.min_p,
+            repetition_penalty=self.repetition_penalty,
+            cache_implementation=args.cache_implementation,
+            num_return_sequences=self.num_generations, # Uncommented to align with new TRL approach
+            #low_memory=True, # MAYBE to save memory consumption
+        )
 
         # Gradient accumulation requires scaled loss. Normally, loss scaling in the parent class depends on whether the
         # model accepts loss-related kwargs. Since we compute our own loss, this check is irrelevant. We set
@@ -513,93 +490,36 @@ class DetikzifyGRPOTrainer(GRPOTrainer):
         prompt_mask = gen_inputs["attention_mask"]
         pixel_values = gen_inputs["pixel_values"]
         
-        
-        #if self.max_prompt_length is not None: # IMPORTANT that this is not triggered if working with DeTikZify
-        #    prompt_ids = prompt_ids[:, -self.max_prompt_length :]
-        #    prompt_mask = prompt_mask[:, -self.max_prompt_length :]
-        
-        # Generate completions using either vLLM or regular generation
-        if self.use_vllm:
-            # First, have main process load weights if needed
-            if self.state.global_step != self._last_loaded_step:
-                self._move_model_to_vllm()
-                self._last_loaded_step = self.state.global_step
-
-            # Generate completions using vLLM: gather all prompts and use them in a single call in the main process
-            all_prompts_text = gather_object(prompts_text)
-            if self.accelerator.is_main_process:
-                # Since 'prompts' contains 'num_generations' duplicates, we first take unique prompts, and generate
-                # num_generations outputs for each one. This is faster than generating outputs for each duplicate
-                # prompt individually.
-                ordered_set_of_prompts = all_prompts_text[:: self.num_generations]
-                with profiling_context(self, "vLLM.generate"):
-                    completion_ids = self.vllm_client.generate(
-                        prompts=ordered_set_of_prompts,
-                        n=self.num_generations,
-                        repetition_penalty=self.repetition_penalty,
-                        temperature=self.temperature,
-                        top_p=self.top_p,
-                        top_k=-1 if self.top_k is None else self.top_k,
-                        min_p=0.0 if self.min_p is None else self.min_p,
-                        max_tokens=self.max_completion_length,
-                        guided_decoding_regex=self.guided_decoding_regex,
-                    )
-            else:
-                completion_ids = [None] * len(all_prompts_text)
-            # Broadcast the completions from the main process to all processes, ensuring each process receives its
-            # corresponding slice.
-            completion_ids = broadcast_object_list(completion_ids, from_process=0)
-            process_slice = slice(
-                self.accelerator.process_index * len(prompts),
-                (self.accelerator.process_index + 1) * len(prompts),
+        # Always use regular generation for multimodal models
+        with unwrap_model_for_generation(
+            self.model_wrapped, self.accelerator, gather_deepspeed3_params=self.args.ds3_gather_for_generation
+        ) as unwrapped_model:
+            #print(prompt_ids)
+            #print(prompt_mask)
+            #print(self.generation_config)
+            #print_mem("Before generation")
+            
+            #print(prompt_ids)
+            #print(self.processing_class.decode(prompt_ids[0], skip_special_tokens=False))
+            #print("GENERATION prompts[0,:20] =", prompt_ids[0, :20].tolist())
+            #print("GENERATION PROMPTS decoded[0] =", self.processing_class.decode(prompt_ids[0], skip_special_tokens=False))
+            
+            prompt_completion_ids = unwrapped_model.generate(
+                input_ids=prompt_ids,
+                attention_mask=prompt_mask,
+                bad_words_ids=[[self.model.config.image_token_id]],
+                pixel_values=pixel_values,
+                generation_config=self.generation_config,
             )
-            completion_ids = completion_ids[process_slice]
+            #print_mem("After generation")
+            
+            #print("GENERATION raw ids[0,:20] =", prompt_completion_ids[0, :20].tolist())
+            #print("GENERATION decoded[0] =", self.processing_class.decode(prompt_completion_ids[0], skip_special_tokens=False))
 
-            # Pad the completions, and concatenate them with the prompts
-            completion_ids = [torch.tensor(ids, device=device) for ids in completion_ids]
-            completion_ids = pad(completion_ids, padding_value=self.processing_class.pad_token_id)
-            prompt_completion_ids = torch.cat([prompt_ids, completion_ids], dim=1)
-        else:
-            # Regular generation path
-            with unwrap_model_for_generation(
-                self.model_wrapped, self.accelerator, gather_deepspeed3_params=self.args.ds3_gather_for_generation
-            ) as unwrapped_model:
-                #print(prompt_ids)
-                #print(prompt_mask)
-                #print(self.generation_config)
-                #print_mem("Before generation")
-                
-                #print(prompt_ids)
-                #print(self.processing_class.decode(prompt_ids[0], skip_special_tokens=False))
-                #print("GENERATION prompts[0,:20] =", prompt_ids[0, :20].tolist())
-                #print("GENERATION PROMPTS decoded[0] =", self.processing_class.decode(prompt_ids[0], skip_special_tokens=False))
-                
-                prompt_completion_ids = unwrapped_model.generate( # CHANGED to update correct model generation logic
-                #    prompt_ids, attention_mask=prompt_mask, generation_config=self.generation_config
-                #)
-                    input_ids=prompt_ids,
-                    attention_mask=prompt_mask,
-                    bad_words_ids=[[self.model.config.image_token_id]],
-                    pixel_values=pixel_values,
-                    #streamer=streamers,
-                    #**self.gen_kwargs,
-                    #**gen_kwargs
-                    generation_config=self.generation_config,
-                )
-                #print_mem("After generation")
-                
-                #print("GENERATION raw ids[0,:20] =", prompt_completion_ids[0, :20].tolist())
-                #print("GENERATION decoded[0] =", self.processing_class.decode(prompt_completion_ids[0], skip_special_tokens=False))
-                
-            # Compute prompt length and extract completion ids
-            prompt_length = prompt_ids.size(1)
-            prompt_ids = prompt_completion_ids[:, :prompt_length]
-            completion_ids = prompt_completion_ids[:, prompt_length:]
-
-            #print(completion_ids)
-            #print(self.processing_class.batch_decode(completion_ids, skip_special_tokens=True))
-            #print("GENERATION sliced ids[0,:20] =", completion_ids[0, :20].tolist())
-            #print("GENERATION SLICED decoded[0] =", self.processing_class.decode(completion_ids[0], skip_special_tokens=False))
+        # Compute prompt length and extract completion ids
+        prompt_length = prompt_ids.size(1)
+        prompt_ids = prompt_completion_ids[:, :prompt_length]
+        completion_ids = prompt_completion_ids[:, prompt_length:]
 
         # Mask everything after the first EOS token
         is_eos = completion_ids == self.processing_class.tokenizer.eos_token_id # CHANGED into .tokenizer

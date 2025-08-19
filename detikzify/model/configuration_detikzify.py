@@ -35,7 +35,7 @@ class DetikzifyVisionConfig(PretrainedConfig): # store the configuration of the 
         num_hidden_layers=27, # number of hidden layers in the encoder
         num_attention_heads=16, # number of attention heads in the encoder
         num_channels=3, # number of channels in the input image (RGB)
-        image_size=420, # size of the input image (image_size x image_size)
+        image_size=384, # size of the input image (image_size x image_size)
         patch_size=14, # size of each patch in the input image
         hidden_act="gelu_pytorch_tanh", # activation function used in the encoder
         layer_norm_eps=1e-6, # epsilon value for layer normalization
@@ -110,7 +110,7 @@ class DetikzifyConfig(PretrainedConfig): # store the overall configuration of th
             logger.info("text_config is None, using default text config")
             text_config = CONFIG_MAPPING["llama"]( # use the default LLaMA configuration
                 rms_norm_eps=1e-5, # epsilon value for RMS normalization
-                pad_token_id=pad_token_id, # token ID for the padding token
+                pad_token_id=128004, # token ID for the padding token
                 tie_word_embeddings=False,
 
                 hidden_size=2048, # embedding dimension of LLaMA 3.2 1B

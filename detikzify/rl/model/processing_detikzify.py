@@ -76,7 +76,7 @@ class DetikzifyProcessor(ProcessorMixin):
 
         if images is None: # if no images are provided, raise an error
             raise ValueError("`images` are expected as arguments to a `DetikzifyProcessor` instance.")
-        else:
+        elif not isinstance(images, list):
             images = make_list_of_images(images) # convert images to a list of images to enable batch processing
         if text is None: # if no text is provided, default to an empty string
             text = len(images) * [""]

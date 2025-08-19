@@ -9,12 +9,10 @@ from torch.utils.data import Dataset
 from transformers import Trainer, TrainerCallback, TrainingArguments
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import logging
-import pickle
-from datasets import load_from_disk as hf_load_from_disk
-from transformers import AutoProcessor
 
 from ..util import SketchAugment, SplitEpochSaveCallback
 from .pretrain import tokenize
+from .train import ImageSketchDataset
 
 logger = logging.get_logger("transformers")
 
@@ -25,79 +23,34 @@ torch.backends.cuda.enable_math_sdp(True) # added after 17278
 WORLD_SIZE = int(os.environ.get("WORLD_SIZE", 1))
 RANK = int(os.environ.get("RANK", 0))
 
-class ImageSketchDataset(Dataset, TrainerCallback):
-    """
-    Dataset which samples sketches instead of images, when a sketch exists
-    for the current epoch.
-    """
-    #def __init__(self, dataset, processor, ds_sketch_ratio=.5):
-    def __init__(self, dataset, processor, ds_sketch_ratio=0.0):
+class MultiEpochDataset(ImageSketchDataset, TrainerCallback):
+    def __init__(self, ds_list: List[Dataset], processor, ds_sketch_ratio=0.0):
         super().__init__()
         self.processor = processor
-        self.dataset = dataset.with_transform(self.tokenize)
+        self.ds_list = [ds.with_transform(self.tokenize) for ds in dataset]
         self.ds_sketch_ratio = ds_sketch_ratio
         self.sketchify = SketchAugment()
         self.cur_epoch = 0
 
     def __len__(self):
-        return len(self.dataset)
-
-    def tokenize(self, batch):
-        for idx, sketches in enumerate(batch['image']):
-            if isinstance(batch["image"][idx], Image.Image):  # Check if it's a valid image
-                batch["image"][idx] = batch["image"][idx].convert("RGB")  # Ensure RGB format
-
-        return tokenize(
-            batch=batch,
-            processor=self.processor,
-            return_tensors="pt",
-            truncation=False,
-            padding=True
-        )
-
-    def filter(self, *args, **kwargs):
-        self.dataset = self.dataset.filter(*args, **kwargs)
+        return len(self.ds_list[self.cur_epoch])
 
     def __getitem__(self, index) -> Dict[str, torch.Tensor]:
-        return self.dataset[index]
+        return self.ds_list[self.cur_epoch][idx]
 
     def __getitems__(self, indices) -> Dict[str, List[torch.Tensor]]:
-        return self.dataset[*indices]
+        return self.ds_list[self.cur_epoch][*indices]
 
     def on_epoch_end(self, *args, **kwargs):
-        self.cur_epoch += 1
+        print(f"End of epoch {self.cur_epoch}, dataset length is {len(self)}")
+        self.cur_epoch = min(self.cur_epoch + 1, len(self.ds_list) - 1)
 
-    def save_to_disk(self, path):
-        os.makedirs(path, exist_ok=True)
-        self.dataset.set_transform(None)
-        self.dataset.save_to_disk(os.path.join(path, "dataset"))
-        self.dataset.set_transform(self.tokenize)
-        self.processor.save_pretrained(os.path.join(path, "processor"))
-        metadata = {
-            "ds_sketch_ratio": self.ds_sketch_ratio,
-            "cur_epoch": self.cur_epoch
-        }
-        with open(os.path.join(path, "metadata.pkl"), "wb") as f:
-            pickle.dump(metadata, f)
-
-    @classmethod
-    def load_from_disk(cls, path, processor=None):
-        dataset = hf_load_from_disk(os.path.join(path, "dataset"))
-        if processor is None:
-            processor = AutoProcessor.from_pretrained(os.path.join(path, "processor"))
-        with open(os.path.join(path, "metadata.pkl"), "rb") as f:
-            metadata = pickle.load(f)
-        instance = cls(dataset, processor, ds_sketch_ratio=metadata["ds_sketch_ratio"])
-        instance.cur_epoch = metadata["cur_epoch"]
-        return instance
-    
-
-def train(
+def curriculum_train(
     output_dir: str,
     model,
     uncompiled_model,
     processor,
-    dataset,
+    dataset_list,
     overwrite=False,
     deepspeed=None,
     # training hyperparams
@@ -114,11 +67,7 @@ def train(
     if WORLD_SIZE != 1:
         gradient_accumulation_steps = gradient_accumulation_steps // WORLD_SIZE
 
-    dataset = ImageSketchDataset(dataset, processor, ds_sketch_ratio=sketch_ratio)
-    logger.info(f"Dataset size before filtering out too long examples: {len(dataset)}")
-    eos_token_id, model_max_length = processor.tokenizer.eos_token_id, processor.tokenizer.model_max_length
-    dataset.filter(lambda ex: (ex['input_ids'] == eos_token_id).nonzero(as_tuple=True)[0].numel() > 0 and (ex['input_ids'] == eos_token_id).nonzero(as_tuple=True)[0][0].item() < model_max_length) # changed after 16967
-    logger.info(f"Dataset size after filtering out too long examples: {len(dataset)}")
+    dataset = MultiEpochDataset(dataset, processor, ds_sketch_ratio=sketch_ratio)
 
     last_checkpoint = None
     if os.path.isdir(output_dir) and not overwrite:
@@ -166,7 +115,7 @@ def train(
             output_dir=output_dir,
             deepspeed=deepspeed,
         ),
-        callbacks=[SplitEpochSaveCallback(step_size=0.25)],
+        callbacks=[SplitEpochSaveCallback(step_size=0.25), dataset],
         data_collator=lambda batch: batch
     )
 

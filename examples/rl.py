@@ -8,7 +8,7 @@ from detikzify.rl.model import load
 
 def parse_args():
     argument_parser = ArgumentParser(
-        description="Fine-tune the DeTikZify-Cambrian model on DaTikZ using Reinforcement Learning."
+        description="Fine-tune the DeTikZify model on DaTikZ using Reinforcement Learning."
     )
     argument_parser.add_argument("--base_model",
         required=True,
@@ -41,6 +41,11 @@ def parse_args():
         type=int,
         default=8,
         help="batch size for training (default: 8)",
+    )
+    argument_parser.add_argument("--micro_batch_size",
+        type=int,
+        default=1,
+        help="micro batch size per GPU (default: 1)",
     )
     argument_parser.add_argument("--num_completions",
         type=int,
@@ -84,5 +89,6 @@ if __name__ == "__main__":
         deepspeed=args.deepspeed,
         freeze_vision_enc=args.freeze_vision_encoder,
         batch_size=args.batch_size,
+        micro_batch_size=args.micro_batch_size,
         num_gen=args.num_completions,
     )

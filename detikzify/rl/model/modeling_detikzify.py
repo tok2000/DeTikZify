@@ -364,6 +364,8 @@ class DetikzifyForConditionalGeneration(DetikzifyPreTrainedModel, GenerationMixi
         output_attentions: Optional[bool] = None, # output attention scores
         output_hidden_states: Optional[bool] = None, # output hidden states
         return_dict: Optional[bool] = None, # return output as a dictionary
+        logits_to_keep: Optional[int] = None,
+        **kwargs,
     ) -> Union[Tuple, DetikzifyCausalLMOutputWithPast]: # return output of the model
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
