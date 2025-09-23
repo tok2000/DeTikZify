@@ -25,15 +25,15 @@ from transformers.utils import logging
 logger = logging.get_logger(__name__)
 
 
-class DetikzifyCambrianVisionConfig(PretrainedConfig): # store the configuration of the vision model
+class DetikzifyCambrianVisionConfig(PretrainedConfig):
     model_type = "detikzify"
 
     def __init__(
         self,
-        vision_towers=None,  # List of vision tower names
-        total_hidden_size=None,  # Calculated automatically from towers
-        image_size=384,  # Default image size for processing
-        concat_factor=3,  # How many image tokens to concatenate
+        vision_towers=None, # List of vision tower names
+        total_hidden_size=None, # Calculated automatically from towers
+        image_size=384,
+        concat_factor=3,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -109,7 +109,7 @@ class DetikzifyCambrianVisionConfig(PretrainedConfig): # store the configuration
 
 class DetikzifyCambrianConfig(PretrainedConfig): # store the overall configuration of the model, including the vision and text configurations
     model_type = "detikzify"
-    is_composition = True # indicates that the model is a multi-modal model
+    is_composition = True
 
     def __init__(
         self,
@@ -138,6 +138,7 @@ class DetikzifyCambrianConfig(PretrainedConfig): # store the overall configurati
             elif isinstance(vision_towers, str):
                 vision_towers = [vision_towers]
             
+            # create default vision config
             self.vision_config = DetikzifyCambrianVisionConfig(
                 vision_towers=vision_towers,
                 concat_factor=concat_factor
@@ -159,7 +160,7 @@ class DetikzifyCambrianConfig(PretrainedConfig): # store the overall configurati
             text_config = CONFIG_MAPPING[text_config["model_type"]](**text_config)
         elif text_config is None:
             logger.info("text_config is None, using default text config")
-            text_config = CONFIG_MAPPING["llama"](
+            text_config = CONFIG_MAPPING["llama"]( # use LLaMA config of LLaMA-3.2-1B
                 rms_norm_eps=1e-5,
                 pad_token_id=128004,
                 tie_word_embeddings=False,
@@ -177,21 +178,19 @@ class DetikzifyCambrianConfig(PretrainedConfig): # store the overall configurati
 
         self.text_config = text_config
         self.concat_factor = self.vision_config.concat_factor  # Use vision config's concat_factor
-        self.seed = kwargs.pop("seed", 42)
+        self.seed = kwargs.pop("seed", 42) # random seed for reproducibility
 
         # For backward compatibility, keep mm_vision_tower_aux_list
         self.mm_vision_tower_aux_list = self.vision_config.vision_towers
-
+ 
         super().__init__(**kwargs, tie_word_embeddings=tie_word_embeddings)
 
     @property
     def total_vision_hidden_size(self):
-        """Get the total hidden size from all vision encoders"""
         return self.vision_config.total_hidden_size
 
     @property
     def vision_towers(self):
-        """Get the list of vision tower names"""
         return self.vision_config.vision_towers
 
     def _get_non_default_generation_parameters(self):

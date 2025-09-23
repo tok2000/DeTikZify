@@ -74,7 +74,7 @@ class DetikzifyCambrianConnector(nn.Module): # connector module to project image
     def __init__(self, config, encoder_outputs):
         super().__init__()
         self.concat_factor = config.concat_factor # number of patches to concatenate
-        vision_hidden_size = sum(size[-1] for size in encoder_outputs)
+        vision_hidden_size = sum(size[-1] for size in encoder_outputs) # sum of hidden sizes from all vision encoders
         self.modality_projection = DetikzifyCambrianSimpleMLP(config, vision_hidden_size) # simple MLP for modality projection
 
     def concatenate(self, x, concat_factor=3): # reshape image hidden states to concatenate patches
@@ -118,24 +118,28 @@ class DetikzifyPreTrainedModel(PreTrainedModel): # base class for all models
 
 
 class DetikzifyCambrianModel(DetikzifyPreTrainedModel): # main model class for Detikzify
-    def __init__(self, config: DetikzifyCambrianConfig, preloaded_vision_encoders=None):
+    def __init__(
+        self, 
+        config: DetikzifyCambrianConfig, # DetikzifyCambrianConfig object for model configuration
+        preloaded_vision_encoders=None # list of pre-loaded vision encoders (optional)
+        ):
         super().__init__(config)
         self.padding_idx = self.config.text_config.pad_token_id
         self.vocab_size = self.config.text_config.vocab_size
 
-        vision_towers = config.vision_towers
+        vision_towers = config.vision_towers # list of vision encoders to use
         
         # Use pre-loaded encoders if provided
         if preloaded_vision_encoders is not None:
             print("Using pre-loaded vision encoders")
-            if isinstance(vision_towers, list) and len(vision_towers) > 1:
+            if isinstance(vision_towers, list) and len(vision_towers) > 1: # multiple vision towers
                 self.vision_models = torch.nn.ModuleList(preloaded_vision_encoders)
             else:
                 self.vision_model = preloaded_vision_encoders[0]
         else:
             # Load encoders normally
             if isinstance(vision_towers, list) and len(vision_towers) > 1:
-                print(f"Initializing Vision Towers: {vision_towers}")  # Debugging
+                print(f"Initializing Vision Towers: {vision_towers}")
                 self.vision_models = nn.ModuleList([])
                 for vision_tower_name in vision_towers:
                     if "CLIP-convnext" in vision_tower_name:
@@ -171,33 +175,31 @@ class DetikzifyCambrianModel(DetikzifyPreTrainedModel): # main model class for D
 
         self.image_token_id = self.config.image_token_id
 
-        with torch.no_grad(): # infer kv_dim_list dynamically
-            # Use the largest image size among all encoders to ensure compatibility
+        with torch.no_grad(): # infer image sequence length from vision encoders
             if hasattr(self, 'vision_models'):
                 # Multiple vision models
                 max_image_size = 384
                 dummy_image = torch.randn(1, 3, max_image_size, max_image_size).to(self.device)
-                encoder_outputs = [encoder(dummy_image).shape for encoder in self.vision_models]
+                encoder_outputs = [encoder(dummy_image).shape for encoder in self.vision_models] # get output shapes from all vision encoders
             else:
                 # Single vision model
                 dummy_image = torch.randn(1, 3, self.vision_model.image_size, self.vision_model.image_size).to(self.device)
-                encoder_outputs = [self.vision_model(dummy_image).shape]
+                encoder_outputs = [self.vision_model(dummy_image).shape] # get output shape from the single vision encoder
             
-            total_tokens = encoder_outputs[0][-2]  # All encoders should produce same number of tokens
+            total_tokens = encoder_outputs[0][-2] # All encoders should produce same number of tokens
             
             # Validate that all encoders produce the same number of tokens
             token_counts = [out[-2] for out in encoder_outputs]
             if not all(tc == token_counts[0] for tc in token_counts):
                 raise ValueError(f"All vision encoders must produce the same number of tokens. Got: {token_counts}")
             
-            self.image_seq_len = total_tokens // config.concat_factor
-            print(f"[DEBUG] image_seq_len: {self.image_seq_len}")
-
-        self.connector = DetikzifyCambrianConnector(config, encoder_outputs) # initialize connector module
+            self.image_seq_len = total_tokens // config.concat_factor # calculate image sequence length after concatenation
+            
+        self.connector = DetikzifyCambrianConnector(config, encoder_outputs)
 
         self.text_model = AutoModel.from_config(config.text_config)
 
-        self._use_flash_attention_2 = config.text_config._attn_implementation == "flash_attention_2" # use flash_attention_2 if specified in config
+        self._use_flash_attention_2 = config.text_config._attn_implementation == "flash_attention_2"
 
         self.post_init()
 
@@ -248,12 +250,10 @@ class DetikzifyCambrianModel(DetikzifyPreTrainedModel): # main model class for D
 
     @property
     def device(self):
-        """Get the device of the model"""
         return next(self.parameters()).device
 
     @property
     def dtype(self):
-        """Get the dtype of the model"""
         return next(self.parameters()).dtype
 
     def inputs_merger( # merge text and image inputs using image hidden states
@@ -281,7 +281,9 @@ class DetikzifyCambrianModel(DetikzifyPreTrainedModel): # main model class for D
         else:
             image_hidden_states = image_hidden_states.to(dtype=self.dtype, device=device)
         
+        # Merge image hidden states into input embeddings at positions of image tokens
         batch_size, num_img_tokens, vision_hidden_size = image_hidden_states.shape
+        # Find indices of image tokens in input_ids
         mask_idxs = (input_ids == self.image_token_id).nonzero(as_tuple=True)
         #  Fixes RuntimeError: a leaf Variable that requires grad is being used in an in-place operation.
         new_inputs_embeds = inputs_embeds.clone()
@@ -289,6 +291,16 @@ class DetikzifyCambrianModel(DetikzifyPreTrainedModel): # main model class for D
         # cast to the dtype of the input_embeds to support quantized models
         reshaped_image_hidden_states = reshaped_image_hidden_states.to(inputs_embeds.dtype)
         
+        ''' 
+        Safer variant of HuggingFace-style inputs_merger.
+        Original implementation directly assigns image_hidden_states to
+        <image> token positions using a boolean mask, assuming a perfect
+        one-to-one match between tokens and features.
+        
+        This version adds a fill_n = min(num_slots, num_feats) guard
+        to handle potential mismatches (e.g., multiple vision towers,
+        concat_factor changes, or tokenization inconsistencies).
+        '''
         num_slots = mask_idxs[0].shape[0]
         num_feats = reshaped_image_hidden_states.shape[0]
         fill_n = min(num_slots, num_feats)
@@ -314,7 +326,7 @@ class DetikzifyCambrianModel(DetikzifyPreTrainedModel): # main model class for D
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
-    ) -> Union[Tuple, DetikzifyBaseModelOutputWithPast]: # return output of the model
+    ) -> Union[Tuple, DetikzifyBaseModelOutputWithPast]:
 
         device = next(self.text_model.parameters()).device
         if input_ids is not None:
@@ -343,9 +355,9 @@ class DetikzifyCambrianModel(DetikzifyPreTrainedModel): # main model class for D
 
         # retrieve input_ids and inputs_embeds
         if input_ids is not None:
-            batch_size, seq_length = input_ids.shape # get batch size and sequence length
+            batch_size, seq_length = input_ids.shape
         elif inputs_embeds is not None:
-            batch_size, seq_length, _ = inputs_embeds.shape # get batch size, sequence length, and embedding size
+            batch_size, seq_length, _ = inputs_embeds.shape
         else:
             raise ValueError("You have to specify either input_ids or inputs_embeds")
 
@@ -354,7 +366,7 @@ class DetikzifyCambrianModel(DetikzifyPreTrainedModel): # main model class for D
             if past_key_values is None:
                 past_key_values = DynamicCache()  # initialize cache for past key values
                 
-            if (
+            if ( # check if past key values exist to determine number of previously seen tokens
                 past_key_values is not None
                 and len(past_key_values) > 0
                 and past_key_values[0] is not None
@@ -377,17 +389,14 @@ class DetikzifyCambrianModel(DetikzifyPreTrainedModel): # main model class for D
             
             if hasattr(self, 'vision_models'): # if multiple vision models are provided
                 vision_hidden_states_list = [vision_model._forward(pixel_values.to(dtype=self.dtype)) for vision_model in self.vision_models]
-                image_hidden_states = torch.cat(vision_hidden_states_list, dim=-1)
-                print(f"[DEBUG] concat_feats.shape: {image_hidden_states.shape}")
+                image_hidden_states = torch.cat(vision_hidden_states_list, dim=-1) # concatenate outputs from all vision models
             elif hasattr(self, 'vision_model'): # if single vision model is provided
                 image_hidden_states = self.vision_model._forward(pixel_values.to(dtype=self.dtype))
             else:
                 raise ValueError("No vision model found")
             
-            image_hidden_states = self.connector(image_hidden_states)
-            print(f"[DEBUG] image_hidden_states.shape: {image_hidden_states.shape}")
-            print(f"[DEBUG] connector weight matrix = {self.connector.modality_projection.proj.weight.shape}")
-
+            image_hidden_states = self.connector(image_hidden_states) # project image hidden states to text hidden size
+            
         elif image_hidden_states is not None: # if image hidden states are provided
             if isinstance(image_hidden_states, list):
                 vision_list = [
@@ -399,21 +408,20 @@ class DetikzifyCambrianModel(DetikzifyPreTrainedModel): # main model class for D
                     image_hidden_states.to(dtype=self.dtype, device=self.device)
                 ]
 
-            #print(f"[DEBUG] vision_list (from latents): {[t.shape for t in vision_list]}")
             # Assertions for batch and token consistency
             batch_sizes = [t.shape[0] for t in vision_list]
             token_counts = [t.shape[1] for t in vision_list]
             
-            assert all(b == batch_sizes[0] for b in batch_sizes), f"[ASSERTION FAILED] Batch sizes do not match: {batch_sizes}"
-            assert all(tc == token_counts[0] for tc in token_counts), f"[ASSERTION FAILED] Token counts do not match: {token_counts}"
+            assert all(b == batch_sizes[0] for b in batch_sizes), f"Batch sizes do not match: {batch_sizes}"
+            assert all(tc == token_counts[0] for tc in token_counts), f"Token counts do not match: {token_counts}"
 
-            concat_feats = torch.cat(vision_list, dim=-1)
-            #print(f"[DEBUG] concat_feats (from latents) shape: {concat_feats.shape}")
+            concat_feats = torch.cat(vision_list, dim=-1) # concatenate outputs from all vision models
             image_hidden_states = self.connector(concat_feats)
-            #print(f"[DEBUG] image_hidden_states (from latents) shape: {image_hidden_states.shape}")
-
+            
         if past_seen_tokens == 0 and inputs_embeds is not None and image_hidden_states is not None:
-            inputs_embeds = self.inputs_merger( # merge text and image inputs using image hidden states and input embeddings
+            # When we generate, we don't want to replace the potential image_token_id that we generated by images
+            # that simply don't exist
+            inputs_embeds = self.inputs_merger(
                 input_ids=input_ids,
                 inputs_embeds=inputs_embeds,
                 image_hidden_states=image_hidden_states,
@@ -433,12 +441,12 @@ class DetikzifyCambrianModel(DetikzifyPreTrainedModel): # main model class for D
         if not return_dict: # return output of the model without past key values
             return tuple(v for v in [*outputs, image_hidden_states] if v is not None)
 
-        return DetikzifyBaseModelOutputWithPast( # return output of the model with past key values
-            last_hidden_state=outputs.last_hidden_state, # final hidden states of the model
-            past_key_values=outputs.past_key_values, # cached key-value pairs for decoding
-            hidden_states=outputs.hidden_states, # hidden states at each layer of the model
-            attentions=outputs.attentions, # attention scores of each layer of the model
-            image_hidden_states=image_hidden_states, # hidden states of the image encoder
+        return DetikzifyBaseModelOutputWithPast(
+            last_hidden_state=outputs.last_hidden_state,
+            past_key_values=outputs.past_key_values,
+            hidden_states=outputs.hidden_states,
+            attentions=outputs.attentions,
+            image_hidden_states=image_hidden_states,
         )
 
 
@@ -447,7 +455,7 @@ class DetikzifyCambrianForConditionalGeneration(DetikzifyPreTrainedModel, Genera
 
     def __init__(self, config, preloaded_vision_encoders=None):
         super().__init__(config)
-        self.model = DetikzifyCambrianModel(config, preloaded_vision_encoders=preloaded_vision_encoders) # initialize Detikzify model
+        self.model = DetikzifyCambrianModel(config, preloaded_vision_encoders=preloaded_vision_encoders) # initialize Detikzify-Cambrian model
         self.image_token_id = self.config.image_token_id
 
         self.lm_head = nn.Linear(config.text_config.hidden_size, config.text_config.vocab_size, bias=False) # linear layer for language modeling head

@@ -38,7 +38,7 @@ def train(
     learning_rate: float = 5e-5,
     sketch_ratio=.5,
     gradient_checkpointing: bool = False,
-    #max_steps: int = None,
+    max_steps: int = -1,
 ):
     assert num_epochs > 0
     gradient_accumulation_steps = batch_size // micro_batch_size
@@ -78,7 +78,8 @@ def train(
             logging_steps=10,
             lr_scheduler_type="cosine",
             optim="adamw_torch" if deepspeed else "adamw_torch_fused",
-            ddp_find_unused_parameters=True, # changed after 19519
+            # https://discuss.pytorch.org/t/find-unused-parameters-true-fixes-an-error/131003/3
+            ddp_find_unused_parameters=True,
             remove_unused_columns=False,
             save_strategy="steps",
             save_steps=50,
@@ -86,7 +87,7 @@ def train(
             save_total_limit=1,
             output_dir=output_dir,
             deepspeed=deepspeed,
-            #max_steps=max_steps,
+            max_steps=max_steps,
         ),
         callbacks=[SplitEpochSaveCallback(step_size=0.25)],
         data_collator=lambda batch: batch
@@ -107,7 +108,7 @@ def train(
     #trainer.save_model(output_dir)
 
     # modified after _orig_mod problem
-    model_to_save = uncompiled_model # changed back after 21592
+    model_to_save = uncompiled_model
     if hasattr(model_to_save, '_orig_mod'):
         model_to_save = model_to_save._orig_mod
     model_to_save.save_pretrained(output_dir)

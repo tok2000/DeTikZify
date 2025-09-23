@@ -16,13 +16,19 @@ from .train import ImageSketchDataset
 
 logger = logging.get_logger("transformers")
 
-torch.backends.cuda.enable_flash_sdp(False) # added after 17278
-torch.backends.cuda.enable_mem_efficient_sdp(False) # added after 17278
-torch.backends.cuda.enable_math_sdp(True) # added after 17278
+# added to disable flash attention, which caused OOMs in some cases
+torch.backends.cuda.enable_flash_sdp(False)
+torch.backends.cuda.enable_mem_efficient_sdp(False)
+torch.backends.cuda.enable_math_sdp(True)
 
 WORLD_SIZE = int(os.environ.get("WORLD_SIZE", 1))
 RANK = int(os.environ.get("RANK", 0))
 
+'''
+A dataset which switches to a new dataset at the end of each epoch.
+This is useful for curriculum learning, where we want to start with an easier dataset
+and gradually increase the difficulty.
+'''
 class MultiEpochDataset(ImageSketchDataset, TrainerCallback):
     def __init__(self, ds_list: List[Dataset], processor, ds_sketch_ratio=0.0):
         super().__init__()
@@ -30,7 +36,7 @@ class MultiEpochDataset(ImageSketchDataset, TrainerCallback):
         self.ds_list = [ds.with_transform(self.tokenize) for ds in dataset]
         self.ds_sketch_ratio = ds_sketch_ratio
         self.sketchify = SketchAugment()
-        self.cur_epoch = 0
+        self.cur_epoch = 0 # current epoch index
 
     def __len__(self):
         return len(self.ds_list[self.cur_epoch])
@@ -43,6 +49,7 @@ class MultiEpochDataset(ImageSketchDataset, TrainerCallback):
 
     def on_epoch_end(self, *args, **kwargs):
         print(f"End of epoch {self.cur_epoch}, dataset length is {len(self)}")
+        # move to the next dataset, but only if we are not at the last dataset
         self.cur_epoch = min(self.cur_epoch + 1, len(self.ds_list) - 1)
 
 def curriculum_train(
@@ -83,13 +90,14 @@ def curriculum_train(
                 "the `output_dir` or add `overwrite` to train from scratch."
             )
 
+    # Freeze vision encoder if specified
     if freeze_vision_enc:
         logger.info("The vision encoder was frozen. To unfreeze, please start training with --freeze_vision_encoder=False.")
         for _, param in model.model.vision_model.named_parameters():
             param.requires_grad = False
     
     trainer = Trainer(
-        model=uncompiled_model, # changed after 17229
+        model=uncompiled_model, # changed in order to avoid _orig_mod problem
         train_dataset=dataset,
         args=TrainingArguments(
             per_device_train_batch_size=micro_batch_size,
@@ -107,7 +115,7 @@ def curriculum_train(
             logging_steps=10,
             lr_scheduler_type="cosine",
             optim="adamw_torch" if deepspeed else "adamw_torch_fused",
-            ddp_find_unused_parameters=True, # changed after 19519
+            ddp_find_unused_parameters=True,
             remove_unused_columns=False,
             save_strategy="epoch",
             report_to="none",
@@ -128,10 +136,8 @@ def curriculum_train(
         last_checkpoint = get_last_checkpoint(output_dir)
         load_state_dict_from_zero_checkpoint(trainer.model.float(), last_checkpoint)
 
-    #trainer.save_model(output_dir)
-
     # modified after _orig_mod problem
-    model_to_save = uncompiled_model # changed back after 21592
+    model_to_save = uncompiled_model
     if hasattr(model_to_save, '_orig_mod'):
         model_to_save = model_to_save._orig_mod
     model_to_save.save_pretrained(output_dir)

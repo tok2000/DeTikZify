@@ -80,7 +80,7 @@ class SiglipVisionTower(ClipVisionTower):
                 "siglip/CLIP-ViT-SO400M-14": "ViT-SO400M-14-SigLIP",
                 "timm/ViT-SO400M-14-SigLIP": "ViT-SO400M-14-SigLIP",
             }
-            open_clip_name = hf_to_open_clip.get(model_name, model_name).replace("hf-hub:timm/", "")
+            open_clip_name = hf_to_open_clip.get(model_name, model_name).replace("hf-hub:timm/", "") # map to open_clip name
 
             checkpoint_path = hf_hub_download(repo_id="timm/ViT-SO400M-14-SigLIP-384", filename="open_clip_model.safetensors")
 
@@ -88,8 +88,7 @@ class SiglipVisionTower(ClipVisionTower):
             model_config.pop("custom_text", None)
 
             model = CLIP(**model_config)
-            #model = model.to(device=self._device)
-
+            
             full_state_dict = safe_torch.load_file(checkpoint_path)
 
             vision_state_dict = {k.replace("visual.", ""): v for k, v in full_state_dict.items() if k.startswith("visual.")}
@@ -132,23 +131,23 @@ class SiglipVisionTower(ClipVisionTower):
 
         return image_features
 
-    def _forward(self, images, interpolate_token = 576, interp = True): # changed after sanity check
+    def _forward(self, images, interpolate_token = 576, interp = True):
         with torch.set_grad_enabled(self.unfreeze_mm_vision_tower):
-            #print("[DEBUG]: Siglip Tower is used.")
-            assert images.dim() == 4, f"Expected image input of shape [B, C, H, W], but got {images.shape}" # after 21443
+            assert images.dim() == 4, f"Expected image input of shape [B, C, H, W], but got {images.shape}" # check input shape
             image_features = self.vision_tower.forward_features(images.to(self.device, dtype=self.dtype))
             
             if image_features.dim() == 2:
-                image_features = image_features.unsqueeze(1)
+                image_features = image_features.unsqueeze(1) # [B, C] → [B, 1, C]
             elif image_features.size(1) == 1:
                 raise ValueError("SigLIP is only returning a single token — patch features may be missing!")
                 
             if interp:
                 image_features = self.interpolate(image_features)
-            if image_features.dim() == 2: # added after 21468
-                image_features = image_features.unsqueeze(1)
+            if image_features.dim() == 2:
+                image_features = image_features.unsqueeze(1) # [B, C] → [B, 1, C]
             return image_features
 
+    # compute the number of patches based on image size and patch size
     def get_output_grid_shape(self, image_size: int = 384):
         dummy = torch.randn(1, 3, image_size, image_size).to("cuda" if torch.cuda.is_available() else "cpu")
         with torch.no_grad():

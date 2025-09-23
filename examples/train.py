@@ -79,5 +79,5 @@ if __name__ == "__main__":
         output_dir=join(args.output, basename(model.config.name_or_path)), # type: ignore
         gradient_checkpointing=args.gradient_checkpointing,
         deepspeed=args.deepspeed,
-        freeze_vision_enc=args.freeze_vision_encoder,
+        freeze_vision_enc=args.freeze_vision_encoder, # added to enable freezing the vision encoder through an argument
     )

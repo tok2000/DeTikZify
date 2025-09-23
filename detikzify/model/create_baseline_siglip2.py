@@ -25,6 +25,7 @@ detikzify_model.model.text_model = text_model
 detikzify_model.model.vision_model = vision_model
 detikzify_model.lm_head = text_model_lm_head
 
+# Transfer config settings from the base models to the Detikzify model
 for key, value in vars(vision_model.config).items():
     setattr(detikzify_model.config.vision_config, key, value)
 
@@ -47,12 +48,3 @@ detikzify_processor.image_processor = image_processor
 
 detikzify_model.save_pretrained(save_directory="/work/tikrause/DeTikZify/detikzify-1B-siglip2")
 detikzify_processor.save_pretrained(save_directory="/work/tikrause/DeTikZify/detikzify-1B-siglip2")
-
-# Generate text using the Detikzify model
-text = "The key to life is"
-
-inputs = tokenizer(text, return_tensors="pt")
-output = detikzify_model.generate(**inputs)
-print(tokenizer.decode(output[0], skip_special_tokens=True))
-
-print(detikzify_model.config)

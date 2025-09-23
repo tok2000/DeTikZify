@@ -107,20 +107,21 @@ class DinoVisionTower(BaseVisionTower):
             raise ValueError(f'Unexpected select feature: {self.select_feature}')
         return image_features
 
-    def interpolate(self, image_features): # interpolate image features to a specified size
-        if self._interp_size is None: # if no interpolation size is specified
+    def interpolate(self, image_features):
+        if self._interp_size is None:
             return image_features
 
         b, num_tokens, dim = image_features.shape # get batch size, number of tokens, and feature dimension
 
-        if num_tokens != self.num_patches: # if number of tokens is not equal to the number of patches
-            target_h = target_w = int(self._interp_size ** 0.5) # calculate target height and width
+        # Only interpolate if the number of tokens does not match the expected number of patches
+        if num_tokens != self.num_patches:
+            target_h = target_w = int(self._interp_size ** 0.5)
             h = w = int(num_tokens ** 0.5) # calculate height and width
 
             image_features = image_features.view(b, h, w, dim) # reshape image features
             image_features = image_features.permute(0, 3, 1, 2).contiguous() # permute dimensions
 
-            image_features = F.interpolate( # interpolate image features
+            image_features = F.interpolate(
                 image_features.to(torch.float32),
                 size=(target_h, target_w),
                 mode='bilinear',
@@ -136,10 +137,8 @@ class DinoVisionTower(BaseVisionTower):
         return image_features
 
     def _forward(self, images, interp = True):
-        # logger.warning(f"images shape: {images.shape}")
         with torch.set_grad_enabled(self.unfreeze_mm_vision_tower):
-            #print("[DEBUG]: Dino Tower is used.")
-            image_forward_outs = self.vision_tower(images.to(device=self.device, dtype=self.dtype)) # changed after 21466
+            image_forward_outs = self.vision_tower(images.to(device=self.device, dtype=self.dtype))
             image_features = self.feature_select(image_forward_outs).to(images.dtype)
             if interp:
                 image_features = self.interpolate(image_features)
@@ -156,6 +155,7 @@ class DinoVisionTower(BaseVisionTower):
         else:
             return self._interp_size
 
+    # compute the number of patches based on image size and patch size
     def get_output_grid_shape(self, image_size: int = 384):
         dummy = torch.randn(1, 3, image_size, image_size).to("cuda" if torch.cuda.is_available() else "cpu")
         with torch.no_grad():

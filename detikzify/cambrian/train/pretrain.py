@@ -89,7 +89,8 @@ def train(
             logging_steps=10,
             lr_scheduler_type="cosine",
             optim="adamw_torch" if deepspeed else "adamw_torch_fused",
-            ddp_find_unused_parameters=True, # changed after 21464
+            # https://discuss.pytorch.org/t/find-unused-parameters-true-fixes-an-error/131003/3
+            ddp_find_unused_parameters=True,
             remove_unused_columns=False,
             save_strategy="no",
             report_to="none",

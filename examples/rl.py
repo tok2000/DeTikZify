@@ -5,6 +5,7 @@ from transformers import set_seed
 from datasets import Dataset, load_from_disk, load_dataset
 
 from detikzify.rl.model import load
+from detikzify.rl.train.train_grpo import train
 
 def parse_args():
     argument_parser = ArgumentParser(
@@ -21,10 +22,6 @@ def parse_args():
     argument_parser.add_argument("--output",
         required=True,
         help="directory where to write the model files",
-    )
-    argument_parser.add_argument("--rl_type",
-        default="grpo",
-        help="The model checkpoint for weights initialization."
     )
     argument_parser.add_argument("--deepspeed",
         help="path to a DeepSpeed json config file",
@@ -67,18 +64,6 @@ if __name__ == "__main__":
     model.config.use_flash_attention = False
 
     dataset: Dataset = load_from_disk(args.datikz)
-    #dataset = dataset.select_columns(["image", "code"]).rename_column("code", "text")
-
-    rl_type = args.rl_type.lower()
-    if rl_type == "grpo":
-        from detikzify.rl.train.train_grpo import train
-    elif rl_type == "dpo":
-        from detikzify.rl.train.train_dpo import train
-    else:
-        raise ValueError(
-            f"The reinforcement learning method ({rl_type}) is not implemented yet. "
-            "Use `grpo` or `dpo` to overcome."
-        )
 
     train(
         model=model,

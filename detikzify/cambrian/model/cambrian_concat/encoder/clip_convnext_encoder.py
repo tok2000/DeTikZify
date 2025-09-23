@@ -73,6 +73,7 @@ class CLIPConvNextTower(BaseVisionTower):
                 raise ValueError(f"Unknown CLIP ConvNext model type in: {vision_tower}")
                 
             if is_large:
+                # if the model includes "multi-stage", set hidden size to sum of all stages
                 if "multi-stage" in vision_tower:
                     self._hidden_size = sum([192, 384, 768, 1536])
                 else:
@@ -85,10 +86,11 @@ class CLIPConvNextTower(BaseVisionTower):
 
     def load_model(self, device_map=None):
         assert "convnext" in self.vision_tower_name.lower()
-        self.vision_model = "convnext"
+        self.vision_model = "convnext" # set the model type
     
         local_model_path = self.vision_tower_name
 
+        # check whether large or xxl model should be loaded
         if "xxl" in local_model_path.lower() or "CLIP-convnext-XXL" in self.vision_tower_name:
             model_name = "convnext_xxlarge_320"
             hidden_size = 3072
@@ -99,6 +101,8 @@ class CLIPConvNextTower(BaseVisionTower):
             raise ValueError(f"Unknown convnext variant in path: {local_model_path}")
 
         model_bin = os.path.join(local_model_path, "open_clip_pytorch_model.bin")
+
+        # check if the model bin file exists in the specified path
         if os.path.exists(model_bin):
             # First create model without weights
             model = create_model(
@@ -108,7 +112,7 @@ class CLIPConvNextTower(BaseVisionTower):
                 device=None
             ).visual
             
-            # Load the pretrained weights
+            # Load the pretrained weights from the local path
             state_dict = torch.load(model_bin, map_location='cpu')
             
             # Create a new state dict with only the visual part
@@ -117,13 +121,7 @@ class CLIPConvNextTower(BaseVisionTower):
                 if k.startswith('visual.'):
                     visual_state_dict[k[7:]] = v  # Remove 'visual.' prefix
             
-            # Load the weights with assign=True
             model.load_state_dict(visual_state_dict, assign=True)
-            
-            # Move to device using to_empty
-            #model = model.to_empty(device=self._device)
-            
-            # Store the model
             self.vision_tower = model
     
             # Initialize the image processor
@@ -135,6 +133,7 @@ class CLIPConvNextTower(BaseVisionTower):
             self.tokenizer = get_tokenizer(model_name)
             self._hidden_size = hidden_size
     
+        # if not, load from huggingface directly
         else:
             clip_model = AutoModel.from_pretrained(self.vision_tower_name)
             processor = AutoProcessor.from_pretrained(self.vision_tower_name)
@@ -184,7 +183,6 @@ class CLIPConvNextTower(BaseVisionTower):
             torch.Tensor: The output features from the vision tower after interpolation.
         """
         with torch.set_grad_enabled(self.unfreeze_mm_vision_tower):
-            #print("[DEBUG]: ConvNext Tower is used.")
             image_features = self.vision_tower.trunk.forward_features(images.to(device=self.device, dtype=self.dtype))  # [B, C, H, W]
 
             if interp:

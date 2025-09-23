@@ -10,7 +10,6 @@ class ProcessorWrapper:
             "width": width,
         }
         self._transforms = transform
-        #print(transform)
         self.image_mean = image_mean
 
     def preprocess(self, image, return_tensors='pt'):
@@ -38,25 +37,24 @@ class BaseVisionTower(nn.Module, ABC):
         self.select_feature = getattr(args, "mm_vision_select_feature", "patch") # select feature to extract
         self.unfreeze_mm_vision_tower = getattr(args, "unfreeze_mm_vision_tower", False) # unfreeze vision tower
         self.delay_load = delay_load
-        self._interp_size = 729
+        self._interp_size = 729 # standard interpolation size for vision towers
 
     @abstractmethod
-    def load_model(self, device_map=None): # must be implemented by subclasses
+    def load_model(self, device_map=None):
         raise NotImplementedError("Subclasses must implement load_model")
 
     @abstractmethod
-    def _forward(self, images): # must be implemented by subclasses
+    def _forward(self, images):
         raise NotImplementedError("Subclasses must implement forward")
 
     def forward(self, images):
-        if type(images) is list: # if input is a list of images
-            image_features = [ # extract features for each image
+        if type(images) is list:
+            image_features = [
                 self._forward(image.unsqueeze(0))
                 for image in images
             ]
         else:
-            image_features = self._forward(images) # extract features for single image
-        #print(f"[OUTPUT] {self.__class__.__name__} Vision Output Shape: {image_features.shape}") # debugging output what shape the vision latents have
+            image_features = self._forward(images)
         return image_features
 
     @property

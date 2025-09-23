@@ -52,10 +52,10 @@ class DetikzifyProcessor(ProcessorMixin):
         if image_token not in tokenizer.vocab:
             raise ValueError(f"{image_token} needs to be added to the `tokenizer` vocabulary.")
 
-        self.image_token = image_token # store the image token
-        self.image_seq_len = image_seq_len # store the image sequence length
+        self.image_token = image_token
+        self.image_seq_len = image_seq_len
 
-        super().__init__(image_processor, tokenizer, **kwargs) # initialize the processor calling the ProcessorMixin class
+        super().__init__(image_processor, tokenizer, **kwargs)
 
     def __call__(
         self,
@@ -74,15 +74,15 @@ class DetikzifyProcessor(ProcessorMixin):
         # Temporary fix for "padding_side" in init_kwargs
         output_kwargs["text_kwargs"].pop("padding_side", None) # remove padding_side from text_kwargs
 
-        if images is None: # if no images are provided, raise an error
+        if images is None:
             raise ValueError("`images` are expected as arguments to a `DetikzifyProcessor` instance.")
         else:
             images = make_list_of_images(images) # convert images to a list of images to enable batch processing
         if text is None: # if no text is provided, default to an empty string
             text = len(images) * [""]
-        elif isinstance(text, str): # if text is a single string, convert it to a list of strings
+        elif isinstance(text, str):
             text = [text]
-        if len(images) != len(text): # ensure equal number of images and text prompts
+        if len(images) != len(text):
             raise ValueError(
                 f"Received {len(images)} images for {len(text)} prompts. Each prompt should be associated with an image."
             )
@@ -108,8 +108,8 @@ class DetikzifyProcessor(ProcessorMixin):
     def decode(self, *args, **kwargs): # decode single input
         return self.tokenizer.decode(*args, **kwargs)
 
-    @property # ensures the model receives all required inputs
-    def model_input_names(self): # returns a list of all input names required by the model
-        tokenizer_input_names = self.tokenizer.model_input_names # get input names from tokenizer
-        image_processor_input_names = self.image_processor.model_input_names # get input names from image processor
+    @property
+    def model_input_names(self):
+        tokenizer_input_names = self.tokenizer.model_input_names
+        image_processor_input_names = self.image_processor.model_input_names
         return list(dict.fromkeys(tokenizer_input_names + image_processor_input_names))

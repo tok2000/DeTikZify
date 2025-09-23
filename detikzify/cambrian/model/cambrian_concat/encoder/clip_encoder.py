@@ -63,7 +63,6 @@ class ClipVisionTower(BaseVisionTower):
         self.is_loaded = True
 
         if IS_XLA_AVAILABLE:
-            # Very Important for TorchXLA
             from torch_xla.utils.checkpoint import checkpoint
             self.vision_tower.vision_model.encoder._gradient_checkpointing_func = checkpoint
 
@@ -84,8 +83,9 @@ class ClipVisionTower(BaseVisionTower):
         if self._interp_size is None:
             return image_features
 
-        b, num_tokens, dim = image_features.shape
+        b, num_tokens, dim = image_features.shape # get batch size, number of tokens, and feature dimension
 
+        # Only interpolate if the number of tokens does not match the expected number of patches
         if num_tokens != self.num_patches:
             target_h = target_w = int(self._interp_size ** 0.5)
             h = w = int(num_tokens ** 0.5)
@@ -122,12 +122,13 @@ class ClipVisionTower(BaseVisionTower):
             image_features = self.feature_select(image_forward_outs).to(images.dtype)
 
             if isinstance(image_features, tuple):
-                image_features = image_features[1]  # full patch tokens
+                image_features = image_features[1] # Take the last layer if multiple are returned
             
             if interp:
                 image_features = self.interpolate(image_features)
             return image_features
 
+    # compute the number of patches based on image size and patch size
     def get_output_grid_shape(self, image_size: int = 384):
         dummy = torch.randn(1, 3, image_size, image_size).to("cuda" if torch.cuda.is_available() else "cpu")
         with torch.no_grad():

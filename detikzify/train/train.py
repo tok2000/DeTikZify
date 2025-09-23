@@ -18,9 +18,10 @@ from .pretrain import tokenize
 
 logger = logging.get_logger("transformers")
 
-torch.backends.cuda.enable_flash_sdp(False) # added after 17278
-torch.backends.cuda.enable_mem_efficient_sdp(False) # added after 17278
-torch.backends.cuda.enable_math_sdp(True) # added after 17278
+# added to disable flash attention, which caused OOMs in some cases
+torch.backends.cuda.enable_flash_sdp(False)
+torch.backends.cuda.enable_mem_efficient_sdp(False)
+torch.backends.cuda.enable_math_sdp(True)
 
 WORLD_SIZE = int(os.environ.get("WORLD_SIZE", 1))
 RANK = int(os.environ.get("RANK", 0))
@@ -30,7 +31,6 @@ class ImageSketchDataset(Dataset, TrainerCallback):
     Dataset which samples sketches instead of images, when a sketch exists
     for the current epoch.
     """
-    #def __init__(self, dataset, processor, ds_sketch_ratio=.5):
     def __init__(self, dataset, processor, ds_sketch_ratio=0.0):
         super().__init__()
         self.processor = processor
@@ -44,8 +44,8 @@ class ImageSketchDataset(Dataset, TrainerCallback):
 
     def tokenize(self, batch):
         for idx, sketches in enumerate(batch['image']):
-            if isinstance(batch["image"][idx], Image.Image):  # Check if it's a valid image
-                batch["image"][idx] = batch["image"][idx].convert("RGB")  # Ensure RGB format
+            if isinstance(batch["image"][idx], Image.Image): # Check if it's a valid image
+                batch["image"][idx] = batch["image"][idx].convert("RGB") # Ensure RGB format
 
         return tokenize(
             batch=batch,
@@ -67,6 +67,7 @@ class ImageSketchDataset(Dataset, TrainerCallback):
     def on_epoch_end(self, *args, **kwargs):
         self.cur_epoch += 1
 
+    # For saving and loading the dataset on disk
     def save_to_disk(self, path):
         os.makedirs(path, exist_ok=True)
         self.dataset.set_transform(None)
@@ -80,6 +81,7 @@ class ImageSketchDataset(Dataset, TrainerCallback):
         with open(os.path.join(path, "metadata.pkl"), "wb") as f:
             pickle.dump(metadata, f)
 
+    # Load the dataset and processor from disk
     @classmethod
     def load_from_disk(cls, path, processor=None):
         dataset = hf_load_from_disk(os.path.join(path, "dataset"))
@@ -117,7 +119,7 @@ def train(
     dataset = ImageSketchDataset(dataset, processor, ds_sketch_ratio=sketch_ratio)
     logger.info(f"Dataset size before filtering out too long examples: {len(dataset)}")
     eos_token_id, model_max_length = processor.tokenizer.eos_token_id, processor.tokenizer.model_max_length
-    dataset.filter(lambda ex: (ex['input_ids'] == eos_token_id).nonzero(as_tuple=True)[0].numel() > 0 and (ex['input_ids'] == eos_token_id).nonzero(as_tuple=True)[0][0].item() < model_max_length) # changed after 16967
+    dataset.filter(lambda ex: (ex['input_ids'] == eos_token_id).nonzero() < model_max_length)
     logger.info(f"Dataset size after filtering out too long examples: {len(dataset)}")
 
     last_checkpoint = None
@@ -134,13 +136,14 @@ def train(
                 "the `output_dir` or add `overwrite` to train from scratch."
             )
 
+    # Freeze vision encoder if specified
     if freeze_vision_enc:
         logger.info("The vision encoder was frozen. To unfreeze, please start training with --freeze_vision_encoder=False.")
         for _, param in model.model.vision_model.named_parameters():
             param.requires_grad = False
     
     trainer = Trainer(
-        model=uncompiled_model, # changed after 17229
+        model=uncompiled_model, # changed in order to avoid _orig_mod problem
         train_dataset=dataset,
         args=TrainingArguments(
             per_device_train_batch_size=micro_batch_size,
@@ -158,7 +161,7 @@ def train(
             logging_steps=10,
             lr_scheduler_type="cosine",
             optim="adamw_torch" if deepspeed else "adamw_torch_fused",
-            ddp_find_unused_parameters=True, # changed after 19519
+            ddp_find_unused_parameters=True,
             remove_unused_columns=False,
             save_strategy="epoch",
             report_to="none",
@@ -179,10 +182,8 @@ def train(
         last_checkpoint = get_last_checkpoint(output_dir)
         load_state_dict_from_zero_checkpoint(trainer.model.float(), last_checkpoint)
 
-    #trainer.save_model(output_dir)
-
     # modified after _orig_mod problem
-    model_to_save = uncompiled_model # changed back after 21592
+    model_to_save = uncompiled_model
     if hasattr(model_to_save, '_orig_mod'):
         model_to_save = model_to_save._orig_mod
     model_to_save.save_pretrained(output_dir)

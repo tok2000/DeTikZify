@@ -66,11 +66,8 @@ def train(
     if WORLD_SIZE != 1:
         gradient_accumulation_steps = gradient_accumulation_steps // WORLD_SIZE
 
-    #logger.info(f"Dataset size before filtering out too long examples: {len(dataset)}")
     eos_token_id, model_max_length = processor.tokenizer.eos_token_id, processor.tokenizer.model_max_length
-    #dataset.filter(lambda ex: (ex['input_ids'] == eos_token_id).nonzero(as_tuple=True)[0].numel() > 0 and (ex['input_ids'] == eos_token_id).nonzero(as_tuple=True)[0][0].item() < model_max_length)
-    #logger.info(f"Dataset size after filtering out too long examples: {len(dataset)}")
-
+    
     last_checkpoint = None
     if os.path.isdir(output_dir) and not overwrite:
         last_checkpoint = get_last_checkpoint(output_dir)
@@ -85,7 +82,7 @@ def train(
                 "the `output_dir` or add `overwrite` to train from scratch."
             )
 
-    # freeze the vision encoder parameters
+    # Freeze vision encoder if specified
     if freeze_vision_enc:
         logger.info("The vision encoder was frozen. To unfreeze, please start training with --freeze_vision_encoder=False.")
         for _, param in model.model.vision_model.named_parameters():
@@ -104,10 +101,8 @@ def train(
         temperature=max(1., model.generation_config.temperature),
         top_p=model.generation_config.top_p,
         top_k=model.generation_config.top_k,
-        #num_train_epochs=num_epochs,
         max_steps=num_train_steps,
         learning_rate=learning_rate,
-        #torch_compile=True,
         torch_compile=False,
         bf16=not deepspeed,
         fp16=deepspeed,
@@ -123,8 +118,7 @@ def train(
         save_total_limit=1,
         output_dir=output_dir,
         deepspeed=deepspeed,
-        #beta=0.0,
-
+        
         max_completion_length=processor.tokenizer.model_max_length-processor.image_seq_len,
         max_prompt_length=None,
         num_generations=num_gen,
@@ -142,9 +136,7 @@ def train(
         train_dataset=dataset,
         callbacks=[SplitEpochSaveCallback(step_size=0.25)],
     )
-    #unwrapped = trainer.accelerator.unwrap_model(trainer.model)
-    #unwrapped.enable_input_require_grads()
-
+    
     import numpy.core.multiarray
     import torch.serialization
     torch.serialization.add_safe_globals({numpy.core.multiarray._reconstruct})

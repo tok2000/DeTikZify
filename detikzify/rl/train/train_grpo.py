@@ -14,11 +14,11 @@ from ..model import load
 from ..infer.tikz import TikzDocument
 from ..evaluate.imagesim import ImageSim
 from ..util import SplitEpochSaveCallback
-from .detikzify_grpo import DetikzifyGRPOTrainer
+from .dtkz_grpo import DetikzifyGRPOTrainer
 
 logger = logging.get_logger("grpo_trainer")
 
-WORLD_SIZE = int(os.environ.get("WORLD_SIZE", 1)) # to be clarified
+WORLD_SIZE = int(os.environ.get("WORLD_SIZE", 1))
 local_rank = int(os.environ.get("LOCAL_RANK", 0))
 device = torch.device("cuda", local_rank) if torch.cuda.is_available() else torch.device("cpu")
 
@@ -31,7 +31,6 @@ def rl_tokenize(
     image_token_id = processor.tokenizer.convert_tokens_to_ids(image_token)
 
     input_ids = processor(
-        #text=[""]*len(batch), #batch['text'],
         images=batch['image'],
         max_length=processor.tokenizer.model_max_length,
         pad_to_multiple_of=8,
@@ -39,7 +38,6 @@ def rl_tokenize(
         **kwargs
     )
     input_ids['labels'] = deepcopy(input_ids['input_ids'])
-    #input_ids['text'] = [""]*len(images), #deepcopy(batch['text'])
     input_ids['image'] = deepcopy(batch['image'])
 
     # do not train on image and pad tokens
@@ -64,8 +62,8 @@ class ImageRLDataset(ImageSketchDataset):
 
     def tokenize(self, batch):
         for idx, sketches in enumerate(batch['image']):
-            if isinstance(batch["image"][idx], Image.Image):  # Check if it's a valid image
-                batch["image"][idx] = batch["image"][idx].convert("RGB")  # Ensure RGB format
+            if isinstance(batch["image"][idx], Image.Image): # Check if it's a valid image
+                batch["image"][idx] = batch["image"][idx].convert("RGB") # Ensure RGB format
 
         return rl_tokenize(
             batch=batch,
@@ -83,13 +81,11 @@ class ImageRLDataset(ImageSketchDataset):
             image = image.convert("RGB")
             
         prompt = ""
-        prompt_image = image
-        
         completion = sample.get("text", "")
 
         return {
             "prompt": prompt,
-            "prompt_image": prompt_image,
+            "image": image,
             "completion": completion,
         }
 
@@ -136,11 +132,8 @@ def train(
         gradient_accumulation_steps = gradient_accumulation_steps // WORLD_SIZE
 
     dataset = ImageRLDataset(dataset, processor)
-    #logger.info(f"Dataset size before filtering out too long examples: {len(dataset)}")
     eos_token_id, model_max_length = processor.tokenizer.eos_token_id, processor.tokenizer.model_max_length
-    #dataset.filter(lambda ex: (ex['input_ids'] == eos_token_id).nonzero(as_tuple=True)[0].numel() > 0 and (ex['input_ids'] == eos_token_id).nonzero(as_tuple=True)[0][0].item() < model_max_length)
-    #logger.info(f"Dataset size after filtering out too long examples: {len(dataset)}")
-
+    
     last_checkpoint = None
     if os.path.isdir(output_dir) and not overwrite:
         last_checkpoint = get_last_checkpoint(output_dir)
@@ -155,7 +148,7 @@ def train(
                 "the `output_dir` or add `overwrite` to train from scratch."
             )
 
-    # freeze the vision encoder parameters
+    # Freeze the vision encoder if specified
     if freeze_vision_enc:
         logger.info("The vision encoder was frozen. To unfreeze, please start training with --freeze_vision_encoder=False.")
         for _, param in model.model.vision_model.named_parameters():
@@ -164,7 +157,7 @@ def train(
     reward_fn = RewardFunction(model, processor)
 
     training_args = GRPOConfig(
-        per_device_train_batch_size=batch_size,
+        per_device_train_batch_size=micro_batch_size,
         gradient_accumulation_steps=gradient_accumulation_steps,
         gradient_checkpointing=gradient_checkpointing,
         gradient_checkpointing_kwargs={'use_reentrant':False},
@@ -172,7 +165,6 @@ def train(
         weight_decay=0,
         num_train_epochs=num_epochs,
         learning_rate=learning_rate,
-        #torch_compile=True,
         torch_compile=False,
         bf16=not deepspeed,
         fp16=deepspeed,
@@ -188,12 +180,15 @@ def train(
         save_total_limit=1,
         output_dir=output_dir,
         deepspeed=deepspeed,
-        #beta=0.0,
-
+        
         max_completion_length=2048,
         num_generations=num_gen,
         log_completions=True,
-        #num_completions_to_print=1,
+        use_vllm=False,
+    )
+    training_args.steps_per_generation = gradient_accumulation_steps
+    training_args.generation_batch_size = (
+        training_args.per_device_train_batch_size * training_args.steps_per_generation
     )
 
     trainer = DetikzifyGRPOTrainer(

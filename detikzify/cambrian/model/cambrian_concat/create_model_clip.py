@@ -67,13 +67,13 @@ detikzify_model = DetikzifyCambrianForConditionalGeneration(config, preloaded_vi
 
 # Load Detikzify processor with pre-loaded encoders
 detikzify_processor = DetikzifyCambrianProcessor(
-    image_processor=None,  # Will be set internally by the processor
+    image_processor=None, # Will be set internally by the processor
     tokenizer=tokenizer,
     image_token="<|reserved_special_token_2|>",
     image_seq_len=detikzify_model.model.image_seq_len, # changed after sanity check
     mm_vision_tower_aux_list=config.vision_towers,
-    vision_encoders=loaded_vision_encoders,  # Pass pre-loaded encoders
-    original_tower_names=vision_encoders  # Pass original clean names
+    vision_encoders=loaded_vision_encoders, # Pass pre-loaded encoders
+    original_tower_names=vision_encoders # Pass original clean names
 )
 
 # Assign text model
@@ -84,8 +84,7 @@ detikzify_model.lm_head = text_model_lm_head
 for key, value in vars(text_model.config).items():
     setattr(detikzify_model.config.text_config, key, value)
 
-# Ensure correct `pad_token_id` before assigning
-VALID_PAD_ID = 128004  # Set to an existing valid ID
+VALID_PAD_ID = 128004
 
 # Step 1: Remove `[PAD]` if it's assigned incorrectly at 128256
 if tokenizer.pad_token_id == 128256:
@@ -98,10 +97,6 @@ tokenizer.add_special_tokens({'pad_token': '<|finetune_right_pad_id|>'})
 tokenizer.pad_token_id = VALID_PAD_ID
 tokenizer.model_max_length = MODEL_MAX_LENGTH
 detikzify_model.config.pad_token_id = tokenizer.pad_token_id  # Ensure model config reflects this
-
-# Assign tokenizer and image processor
-#detikzify_processor.tokenizer = tokenizer
-#detikzify_processor.image_processor = image_processors
 
 # Save the model and processor
 detikzify_model.save_pretrained(save_directory="detikzify-cambrian-concat-1B-clip_siglip_dino")
@@ -119,7 +114,7 @@ batch = detikzify_processor(
     padding=True,
 )
 
-input_ids      = batch["input_ids"].to(device)
+input_ids = batch["input_ids"].to(device)
 image_hidden_states = [t.to(device) for t in batch["image_hidden_states"]]
 
 with torch.no_grad():

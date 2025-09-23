@@ -61,6 +61,11 @@ def parse_args():
         action="store_true",
         help="possibility to freeze the vision encoder",
     )
+    argument_parser.add_argument("--num_curriculum_stages",
+        type=int,
+        default=1,
+        help="number of curriculum stages (default: 1)",
+    )
 
     return argument_parser.parse_args()
 
@@ -78,8 +83,11 @@ if __name__ == "__main__":
     uncompiled_model = model # modified after _orig_mod problem
     model = torch.compile(model)
 
-    datikz_list = [args.datikz0, args.datikz1, args.datikz2, args.datikz3, args.datikz]
+    # Load multiple datasets for curriculum learning
+    datikz_list = [args.datikz0, args.datikz1, args.datikz2, args.datikz3]
     dataset_list = []
+
+    # Load each dataset if the path is provided and exists
     for datikz_elem in datikz_list:
         if datikz_elem is not None:
             datikz: Dataset = load_from_disk(datikz_elem)
@@ -87,7 +95,16 @@ if __name__ == "__main__":
                 datikz = datikz.select_columns(["image", "code"]).rename_column("code", "text")
             except:
                 datikz = datikz.select_columns(["image", "text"])
-            dataset_list.append(datikz)
+            for i in range(args.num_curriculum_stages): # Append the same dataset multiple times based on num_curriculum_stages
+                dataset_list.append(datikz)
+    
+    # Always include the main datikz dataset at the end
+    datikz: Dataset = load_from_disk(args.datikz)
+    try:
+        datikz = datikz.select_columns(["image", "code"]).rename_column("code", "text")
+    except:
+        datikz = datikz.select_columns(["image", "text"])
+    dataset_list.append(datikz)
 
     curriculum_train(
         model=model,

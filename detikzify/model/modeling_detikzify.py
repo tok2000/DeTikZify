@@ -66,6 +66,8 @@ class DetikzifySimpleMLP(nn.Module): # simple MLP for modality projection from v
         self.proj = nn.Linear(input_size, output_size, bias=False)
 
     def forward(self, x):
+        # changed after dtype mismatch
+        x = x.to(self.proj.weight.dtype)
         return self.proj(x)
 
 
@@ -161,7 +163,7 @@ class DetikzifyModel(DetikzifyPreTrainedModel): # main model class for Detikzify
     def set_input_embeddings(self, value):
         self.text_model.set_input_embeddings(value)
 
-    def inputs_merger( # merge text and image inputs using image hidden states
+    def inputs_merger(
         self,
         input_ids: torch.LongTensor,
         inputs_embeds: Optional[torch.Tensor],
@@ -321,16 +323,16 @@ class DetikzifyForConditionalGeneration(DetikzifyPreTrainedModel, GenerationMixi
         input_ids: torch.LongTensor = None,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[List[torch.FloatTensor]] = None, # cached key-value pairs for decoding
+        past_key_values: Optional[List[torch.FloatTensor]] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
-        pixel_values: Optional[torch.FloatTensor] = None, # pixel values for image inputs
-        image_hidden_states: Optional[torch.FloatTensor] = None, # hidden states of the image encoder
-        labels: Optional[torch.LongTensor] = None, # labels for text generation
-        use_cache: Optional[bool] = None, # use cache for decoding
-        output_attentions: Optional[bool] = None, # output attention scores
-        output_hidden_states: Optional[bool] = None, # output hidden states
-        return_dict: Optional[bool] = None, # return output as a dictionary
-    ) -> Union[Tuple, DetikzifyCausalLMOutputWithPast]: # return output of the model
+        pixel_values: Optional[torch.FloatTensor] = None,
+        image_hidden_states: Optional[torch.FloatTensor] = None,
+        labels: Optional[torch.LongTensor] = None,
+        use_cache: Optional[bool] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+    ) -> Union[Tuple, DetikzifyCausalLMOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -353,6 +355,7 @@ class DetikzifyForConditionalGeneration(DetikzifyPreTrainedModel, GenerationMixi
         )
 
         hidden_states = outputs[0] # get hidden states from the transformer model
+        hidden_states = hidden_states.to(self.lm_head.weight.dtype) # avoid dtype mismatch with lm_head
         logits = self.lm_head(hidden_states) # get logits from the language modeling head
         logits = logits.float()
 

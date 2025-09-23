@@ -35,6 +35,7 @@ from .encoder.clip_convnext_encoder import CLIPConvNextTower
 
 logger = logging.get_logger(__name__)
 
+# load processors from config file
 def load_vision_processors_from_config(config):
     processors = []
     for tower_type, image_size, tower_name in zip(config["types"], config["image_sizes"], config["towers"]):
@@ -53,9 +54,10 @@ def load_vision_processors_from_config(config):
             processor = encoder.image_processor
         else:
             raise ValueError(f"Unsupported tower_type: {tower_type}")
-        processors.append(processor)
-    return processors
-    
+        processors.append(processor) # add processor to list
+    return processors # return list of processors
+
+# load encoders from config file
 def load_vision_encoders_from_config(config):
     encoders = []
     for tower_type, tower_name in zip(config["types"], config["towers"]):
@@ -70,8 +72,8 @@ def load_vision_encoders_from_config(config):
             encoder = DinoVisionTower(tower_name, args={})
         else:
             raise ValueError(f"Unsupported tower_type: {tower_type}")
-        encoders.append(encoder)
-    return encoders
+        encoders.append(encoder) # add encoder to list
+    return encoders # return list of encoders
 
 
 class DetikzifyProcessorKwargs(ProcessingKwargs, total=False):
@@ -94,7 +96,7 @@ class DetikzifyCambrianProcessor(ProcessorMixin):
         if image_token not in tokenizer.vocab:
             raise ValueError(f"{image_token} needs to be added to the `tokenizer` vocabulary.")
 
-        if image_processor is None:
+        if image_processor is None: # default to siglip processor
             image_processor = AutoImageProcessor.from_pretrained("google/siglip-so400m-patch14-384")
 
         super().__init__(image_processor, tokenizer)
@@ -114,7 +116,6 @@ class DetikzifyCambrianProcessor(ProcessorMixin):
 
         # Use pre-loaded encoders if provided, otherwise load them
         if vision_encoders is not None:
-            print("[DEBUG] Using pre-loaded vision encoders")
             self.vision_tower_encoders = vision_encoders
             
             # Use original tower names if provided, otherwise extract from encoders
@@ -122,12 +123,13 @@ class DetikzifyCambrianProcessor(ProcessorMixin):
                 tower_names = original_tower_names
             else:
                 tower_names = []
-                for encoder in vision_encoders:
+                for encoder in vision_encoders: # try to extract tower name from encoder
                     if hasattr(encoder, 'model_name_or_path'):
                         tower_names.append(encoder.model_name_or_path)
                     else:
                         tower_names.append(str(type(encoder)))
             
+            # load processors based on tower names
             for encoder, tower_name in zip(vision_encoders, tower_names):
                 self.vision_tower_processors.append(encoder.image_processor)
                 
@@ -145,8 +147,7 @@ class DetikzifyCambrianProcessor(ProcessorMixin):
                 self.mm_vision_tower_types.append(tower_type)
                 self.mm_vision_tower_image_sizes.append(encoder.image_size)
                 self.mm_vision_tower_names_or_paths.append(tower_name)
-        else:
-            print("[DEBUG] Loading vision encoders in processor")
+        else: # load encoders and processors based on tower list
             for tower in self.vision_tower_list:
                 if "clip-vit-large" in tower.lower():
                     encoder = ClipVisionTower(tower, args={})
@@ -172,6 +173,7 @@ class DetikzifyCambrianProcessor(ProcessorMixin):
                 else:
                     raise ValueError(f"Unsupported tower_type: {tower}")
             
+                # save processor and encoder and metadata
                 self.vision_tower_processors.append(processor)
                 self.vision_tower_encoders.append(encoder)
                 self.mm_vision_tower_types.append(tower_type)
@@ -189,7 +191,6 @@ class DetikzifyCambrianProcessor(ProcessorMixin):
                 
                 if not all(tc == token_counts[0] for tc in token_counts):
                     raise ValueError(f"All vision encoders must produce the same number of tokens. Got: {token_counts}")
-                print(f"[DEBUG] All encoders produce {token_counts[0]} tokens")
 
     def __call__(
         self,
@@ -228,36 +229,42 @@ class DetikzifyCambrianProcessor(ProcessorMixin):
 
         text_inputs = self.tokenizer(prompt_strings, return_tensors=return_tensors, padding=True, truncation=True)
 
+        # return image latents from multi-vision towers if requested
         if return_image_latents:
             vision_latents = self.extract_vision_latents(images)
-            return BatchFeature(data={**text_inputs, "image_hidden_states": vision_latents})
+            return BatchFeature(data={**text_inputs, "image_hidden_states": vision_latents}) # include list of vision latents
 
-        # Use the first vision tower processor for fallback
+        # use the first vision tower processor for fallback
         if self.vision_tower_processors:
             image_inputs = self.vision_tower_processors[0](images=images, return_tensors=return_tensors)
-        else:
+        else: # fallback to default image processor
             image_inputs = self.image_processor(images=images, return_tensors=return_tensors)
         return BatchFeature(data={**text_inputs, **image_inputs})
 
+    # extract vision latents from all vision towers
     def extract_vision_latents(self, images):
         vision_latents = []
         for processor, encoder in zip(self.vision_tower_processors, self.vision_tower_encoders):
-            # Handle HuggingFace processors
-            if hasattr(processor, "preprocess") or hasattr(processor, "image_mean"):
+            # extract pixel values using the processor
+            if hasattr(processor, "preprocess") or hasattr(processor, "image_mean"): # Handle HuggingFace processors
                 processed = processor(images=images, return_tensors="pt")
                 pixel_values = processed['pixel_values']
-            elif hasattr(processor, "image_processor"):  # Handle processors with image_processor attribute
+            elif hasattr(processor, "image_processor"): # Handle processors with image_processor attribute
                 processed = processor.image_processor(images=images, return_tensors="pt")
                 pixel_values = processed['pixel_values']
             else:
                 # Assume torchvision transform or ProcessorWrapper
                 # Apply to each image and stack
                 pixel_values = torch.stack([processor(image) for image in images])
+            
+            # extract features using the encoder
             with torch.no_grad():
                 features = encoder(pixel_values)
-            vision_latents.append(features)
-        return vision_latents
 
+            vision_latents.append(features)
+        return vision_latents # return list of vision latents
+
+    # serialize to dictionary
     def to_dict(self):
         base_dict = super().to_dict()
         base_dict.update({
@@ -267,6 +274,7 @@ class DetikzifyCambrianProcessor(ProcessorMixin):
         })
         return base_dict
 
+    # save processor and vision tower config
     def save_pretrained(self, save_directory, **kwargs):
         super().save_pretrained(save_directory, **kwargs)
         tower_config = {
@@ -288,16 +296,13 @@ class DetikzifyCambrianProcessor(ProcessorMixin):
     def model_input_names(self):
         return list(dict.fromkeys(self.tokenizer.model_input_names + self.image_processor.model_input_names))
 
+    # load processor and vision tower config from pretrained
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, **kwargs):
-        print(f"[DEBUG] Loading DetikzifyCambrianProcessor from {pretrained_model_name_or_path}")
         processor = super().from_pretrained(pretrained_model_name_or_path, **kwargs)
-        print(f"[DEBUG] Loaded processor type: {type(processor)}")
-        print(f"[DEBUG] Processor has image_token: {hasattr(processor, 'image_token')}")
         
         tower_config_path = os.path.join(pretrained_model_name_or_path, "vision_tower_config.json")
         if os.path.exists(tower_config_path):
-            print(f"[DEBUG] Loading vision tower config from {tower_config_path}")
             with open(tower_config_path, "r") as f:
                 tower_config = json.load(f)
             processor.vision_tower_processors = load_vision_processors_from_config(tower_config)

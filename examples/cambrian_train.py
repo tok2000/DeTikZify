@@ -1,10 +1,10 @@
 #!/usr/bin/env -S torchrun --nproc_per_node gpu
 
 import torch._dynamo
-torch._dynamo.config.verbose = False # after 21443
+torch._dynamo.config.verbose = False
 torch._dynamo.config.optimize_ddp = False
-torch._dynamo.config.suppress_errors = True # after 16982
-torch._dynamo.disable() # after 21443
+torch._dynamo.config.suppress_errors = True
+torch._dynamo.disable()
 
 from argparse import ArgumentParser
 from os.path import basename, join, exists
@@ -75,8 +75,8 @@ if __name__ == "__main__":
     model.gradient_checkpointing_enable()
 
     uncompiled_model = model # modified after _orig_mod problem
-    model = torch.compile(model, backend="inductor") # changed after 17179, again after 21508, again after 21516, deleted after 21525, added after 21528
-    model.config.use_flash_attention = False # added after 17267
+    model = torch.compile(model, backend="inductor") # using torchinductor as backend because of memory issues
+    model.config.use_flash_attention = False # disabled flash attention due to memory issues
     
     # Load the dataset using the original class but with our correct processor
     if exists(args.datikz):
@@ -90,45 +90,15 @@ if __name__ == "__main__":
     print(f"Dataset processor has image_token: {hasattr(dataset.processor, 'image_token')}")
 
     train(
-            model=model,
-            uncompiled_model=uncompiled_model, # modified after _orig_mod problem
-            processor=processor,
-            dataset=dataset,
-            sketch_ratio=0.0,
-            output_dir=join(args.output, basename(model.config.name_or_path)), # type: ignore
-            gradient_checkpointing=args.gradient_checkpointing,
-            deepspeed=args.deepspeed,
-            batch_size=args.batch_size,
-            micro_batch_size=args.micro_batch_size,
-            #max_steps=1
-        )
-    '''
-    with profile(
-        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-        schedule=schedule(
-            wait=0,
-            warmup=0,
-            active=1,
-            repeat=1
-        ),
-        record_shapes=True,
-        profile_memory=True,
-        with_stack=True
-    ) as prof:
-        train(
-            model=model,
-            uncompiled_model=uncompiled_model, # modified after _orig_mod problem
-            processor=processor,
-            dataset=dataset,
-            sketch_ratio=0.0,
-            output_dir=join(args.output, basename(model.config.name_or_path)), # type: ignore
-            gradient_checkpointing=args.gradient_checkpointing,
-            deepspeed=args.deepspeed,
-            batch_size=args.batch_size,
-            micro_batch_size=args.micro_batch_size,
-            max_steps=1
+        model=model,
+        uncompiled_model=uncompiled_model, # modified after _orig_mod problem
+        processor=processor,
+        dataset=dataset,
+        sketch_ratio=0.0,
+        output_dir=join(args.output, basename(model.config.name_or_path)), # type: ignore
+        gradient_checkpointing=args.gradient_checkpointing,
+        deepspeed=args.deepspeed,
+        batch_size=args.batch_size,
+        micro_batch_size=args.micro_batch_size,
         )
     
-    prof.export_chrome_trace("training_profile.json")
-    print("Profiler results saved to training_profile.json")
-    '''
