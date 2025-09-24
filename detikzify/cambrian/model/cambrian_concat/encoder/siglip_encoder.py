@@ -107,6 +107,11 @@ class SiglipVisionTower(ClipVisionTower):
         if self._interp_size is None:
             return image_features
 
+        # Check if we have the expected 3D shape
+        if image_features.dim() != 3:
+            print(f"[ERROR] Expected 3D tensor [batch, num_tokens, dim], got {image_features.dim()}D tensor")
+            return image_features
+
         b, num_tokens, dim = image_features.shape
 
         if num_tokens != self.num_patches:

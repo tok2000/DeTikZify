@@ -3,21 +3,15 @@
 import torch._dynamo
 torch._dynamo.config.optimize_ddp = False
 
-
-import torch._dynamo
-torch._dynamo.config.optimize_ddp = False
-
 from argparse import ArgumentParser
 from os.path import basename, join, exists
-from os.path import basename, join, exists
 
-from datasets import Dataset, load_from_disk
 from datasets import Dataset, load_from_disk
 from transformers import set_seed
 from transformers.utils.logging import enable_explicit_format, set_verbosity_info
 
 from detikzify.dataset import load_dataset
-from detikzify.model import load
+from detikzify.model.vis729 import load
 from detikzify.train import train
 
 def parse_args():
@@ -55,10 +49,6 @@ def parse_args():
         action="store_true",
         help="possibility to freeze the vision encoder",
     )
-    argument_parser.add_argument("--freeze_vision_encoder",
-        action="store_true",
-        help="possibility to freeze the vision encoder",
-    )
 
     return argument_parser.parse_args()
 
@@ -78,29 +68,16 @@ if __name__ == "__main__":
 
     datikz: Dataset = load_from_disk(args.datikz) # type: ignore
     datikz = datikz.select_columns(["image", "code"]).rename_column("code", "text")
-    model, processor = load(args.base_model, modality_projector=args.projector, ignore_mismatched_sizes=True)
-    
-    import torch
-    model.gradient_checkpointing_enable()
-
-    uncompiled_model = model # modified after _orig_mod problem
-    model = torch.compile(model)
-
-    datikz: Dataset = load_from_disk(args.datikz) # type: ignore
-    datikz = datikz.select_columns(["image", "code"]).rename_column("code", "text")
 
     train(
         model=model,
-        uncompiled_model=uncompiled_model, # modified after _orig_mod problem
         uncompiled_model=uncompiled_model, # modified after _orig_mod problem
         processor=processor,
         dataset=datikz,
         #sketch_ratio=args.sketch_ratio,
         sketch_ratio=0.0,
-        #sketch_ratio=args.sketch_ratio,
-        sketch_ratio=0.0,
         output_dir=join(args.output, basename(model.config.name_or_path)), # type: ignore
         gradient_checkpointing=args.gradient_checkpointing,
         deepspeed=args.deepspeed,
-        freeze_vision_enc=args.freeze_vision_encoder, # added to enable freezing the vision encoder through an argument
+        freeze_vision_enc=args.freeze_vision_encoder,
     )

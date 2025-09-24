@@ -122,6 +122,17 @@ class DetikzifyConfig(PretrainedConfig):
                 rope_theta=500000.0, # theta value for the relative positional encoding
                 bos_token_id=128000, # token ID for the beginning of sentence token
                 eos_token_id=128001 # token ID for the end of sentence token
+
+                hidden_size=2048, # embedding dimension of LLaMA 3.2 1B
+                intermediate_size=8192, # intermediate size of the feed-forward layer in LLaMA 3.2 1B
+                vocab_size=128256, # vocabulary size of LLaMA 3.2 1B
+                num_hidden_layers=16, # number of hidden layers in LLaMA 3.2 1B
+                num_attention_heads=32, # number of attention heads in LLaMA 3.2 1B
+                num_key_value_heads=8, # number of key-value attention heads in LLaMA 3.2 1B
+                use_scaled_rope=True, # use scaled relative positional encoding
+                rope_theta=500000.0, # theta value for the relative positional encoding
+                bos_token_id=128000, # token ID for the beginning of sentence token
+                eos_token_id=128001 # token ID for the end of sentence token
             )
 
         self.text_config = text_config

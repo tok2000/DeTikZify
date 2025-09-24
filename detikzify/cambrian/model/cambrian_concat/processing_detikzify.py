@@ -200,6 +200,7 @@ class DetikzifyCambrianProcessor(ProcessorMixin):
         add_bos_token: bool = False,
         add_eos_token: bool = False,
         return_image_latents: bool = True,
+        return_pixel_values: bool = False,
         return_tensors: Optional[str] = None,
         **kwargs
     ) -> BatchFeature:
@@ -234,6 +235,52 @@ class DetikzifyCambrianProcessor(ProcessorMixin):
             vision_latents = self.extract_vision_latents(images)
             return BatchFeature(data={**text_inputs, "image_hidden_states": vision_latents}) # include list of vision latents
 
+
+        if return_pixel_values:
+            multi_pixel_values = []
+            for processor, encoder in zip(self.vision_tower_processors, self.vision_tower_encoders):
+                if hasattr(processor, "preprocess") or hasattr(processor, "image_mean"):
+                    processed = processor(images=images, return_tensors="pt")
+                    pixel_values = processed['pixel_values']
+                    # Resize pixel values to match encoder's expected input size
+                    if hasattr(encoder, '_image_size') and pixel_values.shape[-1] != encoder._image_size:
+                        pixel_values = torch.nn.functional.interpolate(
+                            pixel_values, 
+                            size=(encoder._image_size, encoder._image_size), 
+                            mode="bilinear", 
+                            align_corners=False
+                        )
+                elif hasattr(processor, "image_processor"):  # Handle processors with image_processor attribute
+                    processed = processor.image_processor(images=images, return_tensors="pt")
+                    pixel_values = processed['pixel_values']
+                    # Resize pixel values to match encoder's expected input size
+                    if hasattr(encoder, '_image_size') and pixel_values.shape[-1] != encoder._image_size:
+                        pixel_values = torch.nn.functional.interpolate(
+                            pixel_values, 
+                            size=(encoder._image_size, encoder._image_size), 
+                            mode="bilinear", 
+                            align_corners=False
+                        )
+                else:
+                    # Assume torchvision transform or ProcessorWrapper
+                    # Apply to each image and stack
+                    pixel_values = torch.stack([processor(image) for image in images])
+                    # Resize pixel values to match encoder's expected input size
+                    if hasattr(encoder, '_image_size') and pixel_values.shape[-1] != encoder._image_size:
+                        pixel_values = torch.nn.functional.interpolate(
+                            pixel_values, 
+                            size=(encoder._image_size, encoder._image_size), 
+                            mode="bilinear", 
+                            align_corners=False
+                        )
+                multi_pixel_values.append(pixel_values)
+            return BatchFeature(
+                data={
+                    **text_inputs,
+                    **{f"pixel_values_tower_{i}": v for i, v in enumerate(multi_pixel_values)}
+                }
+            )
+        
         # use the first vision tower processor for fallback
         if self.vision_tower_processors:
             image_inputs = self.vision_tower_processors[0](images=images, return_tensors=return_tensors)

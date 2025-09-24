@@ -5,6 +5,7 @@ from functools import partial
 from itertools import chain
 from os.path import basename, join
 import torch
+import torch
 
 from datasets import Dataset, IterableDataset
 from transformers import set_seed
@@ -28,6 +29,8 @@ def preprocess(batch, size):
                     text=text,
                     image=convert(expand(cil_pair['image'], size, do_trim=True), "png")
                 )
+
+
 
 
 
@@ -74,6 +77,31 @@ if __name__ == "__main__":
         fn_kwargs=dict(size=model.config.vision_config.image_size),
     )
 
+    import torch._dynamo
+    torch._dynamo.config.optimize_ddp = False  # Disable DDP optimization
+
+    # Check if tokens are out-of-range before training
+    from torch.utils.data import DataLoader
+    
+    def custom_collate_fn(batch):
+        """Ensures that PIL images are kept as they are, but text is tokenized."""
+        processed_batch = {"image": [], "text": []}
+    
+        for item in batch:
+            processed_batch["image"].append(item["image"])  # Keep PIL images as is
+            processed_batch["text"].append(item["text"])  # Collect text
+    
+        return processed_batch
+
+    dataloader = DataLoader(
+        Dataset.from_generator(
+            generator=partial(iter, arxivcap.take(args.size)),
+            features=arxivcap.features,
+        ),
+        batch_size=4,
+        collate_fn=custom_collate_fn  # Use the custom function
+    )
+    
     pretrain(
         model=model,
         processor=processor,
@@ -83,5 +111,6 @@ if __name__ == "__main__":
         dataset=Dataset.from_generator(
             generator=partial(iter, arxivcap.take(args.size)),
             features=arxivcap.features,
-        )
+        ),
+        batch_size=4  # Reduce this if needed
     )

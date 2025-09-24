@@ -200,6 +200,13 @@ class DetikzifyModel(DetikzifyPreTrainedModel): # main model class for Detikzify
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
+        #print("input_ids", input_ids)
+
+        #if isinstance(input_ids, list):
+        #    input_ids = torch.tensor(input_ids, dtype=torch.long)
+
+        #print("input_ids after conversion", input_ids)
+
         if self.training and self.text_model.gradient_checkpointing and use_cache:
             logger.warning_once(
                 "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`..."
@@ -224,6 +231,7 @@ class DetikzifyModel(DetikzifyPreTrainedModel): # main model class for Detikzify
             raise ValueError("When first calling the model, if input_embeds are passed, input_ids should not be None.")
 
         if inputs_embeds is None:
+            #print(f"input_ids.shape: {input_ids.shape}", "Here could be the fourth problem")
             inputs_embeds = self.text_model.get_input_embeddings()(input_ids).to(self.device)
 
         # START VISUAL INPUTS INTEGRATION
@@ -231,6 +239,7 @@ class DetikzifyModel(DetikzifyPreTrainedModel): # main model class for Detikzify
             raise ValueError("You cannot specify both pixel_values and image_hidden_states at the same time")
         elif pixel_values is not None: # if pixel values are provided
             # Get sequence from the vision encoder
+            #print(f"pixel_values.shape: {pixel_values.shape}", "Here could be the fifth problem")
             image_hidden_states = self.vision_model( # forward pass for the vision model
                 pixel_values=pixel_values.to(dtype=self.dtype),  # fp16 compatibility for mixed precision training
             ).last_hidden_state
@@ -238,6 +247,9 @@ class DetikzifyModel(DetikzifyPreTrainedModel): # main model class for Detikzify
             image_hidden_states = self.connector(image_hidden_states) # project image hidden states to text hidden states using connector module
 
         elif image_hidden_states is not None: # if image hidden states are provided
+            if isinstance(image_hidden_states, list): # ADDED after 34345
+                image_hidden_states = torch.cat(image_hidden_states, dim=0)
+            #print(f"image_hidden_states.shape: {image_hidden_states.shape}", "Here could be the sixth problem")
             image_hidden_states = image_hidden_states.to(dtype=self.dtype, device=input_ids.device) # no need to project image hidden states to text hidden states
 
         if past_seen_tokens == 0 and inputs_embeds is not None and image_hidden_states is not None:
@@ -361,11 +373,13 @@ class DetikzifyForConditionalGeneration(DetikzifyPreTrainedModel, GenerationMixi
 
         loss = None
         if labels is not None:
+            #print(f"labels.shape: {labels.shape}", "Here could be the second problem")
             labels = labels.to(logits.device) # move labels to the same device as logits
             # Shift so that tokens < n predict n
             if attention_mask is not None:
                 # we use the input attention mask to shift the logits and labels, because it is 2D.
                 # we also crop attn mask in case it is longer, which happens in PrefixTuning with peft
+                #print(f"attention_mask.shape: {attention_mask.shape}", "Here could be the third problem")
                 shift_attention_mask = attention_mask[:, -(logits.shape[1] - 1) :].to(logits.device) # shift attention mask
                 shift_logits = logits[..., :-1, :][shift_attention_mask != 0].contiguous() # remove last token from logits
                 shift_labels = labels[..., 1:][shift_attention_mask != 0].contiguous() # remove first token from labels
@@ -401,6 +415,10 @@ class DetikzifyForConditionalGeneration(DetikzifyPreTrainedModel, GenerationMixi
         num_logits_to_keep=None, # controls the number of logits to keep for each generation step
         **kwargs,
     ):
+        # Handle case where input_ids is a list
+        if isinstance(input_ids, list):
+            input_ids = torch.tensor(input_ids, dtype=torch.long)
+            
         # If we have cache: let's slice `input_ids` through `cache_position`, to keep only the unprocessed tokens
         if past_key_values is not None: # if past key values exist, only keep unprocessed tokens
             if inputs_embeds is not None:  # remove processed tokens from input embeddings

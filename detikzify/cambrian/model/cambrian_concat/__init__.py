@@ -57,6 +57,11 @@ def load(model_name_or_path, modality_projector=None, is_v1=False, **kwargs):
         print("Falling back to direct processor loading...")
         processor = DetikzifyCambrianProcessor.from_pretrained(model_name_or_path)
     
+    if hasattr(processor, 'vision_tower_encoders'):
+        preloaded_vision_encoders = processor.vision_tower_encoders
+    else:
+        preloaded_vision_encoders = None
+    
     model = AutoModelForVision2Seq.from_pretrained(model_name_or_path, **kwargs)
     
     if modality_projector is not None:

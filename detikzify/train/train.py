@@ -1,12 +1,13 @@
 from io import BytesIO
 import os
+import pickle
 from random import random
 from typing import Dict, List
 
 from PIL import Image
 import torch
 from torch.utils.data import Dataset
-from transformers import Trainer, TrainerCallback, TrainingArguments
+from transformers import Trainer, TrainerCallback, TrainingArguments, AutoProcessor
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils import logging
 import pickle
@@ -98,6 +99,7 @@ def train(
     output_dir: str,
     model,
     uncompiled_model,
+    uncompiled_model,
     processor,
     dataset,
     overwrite=False,
@@ -110,7 +112,9 @@ def train(
     sketch_ratio=.5,
     gradient_checkpointing: bool = False,
     freeze_vision_enc: bool = False,
+    freeze_vision_enc: bool = False,
 ):
+    assert num_epochs > 0
     assert num_epochs > 0
     gradient_accumulation_steps = batch_size // micro_batch_size
     if WORLD_SIZE != 1:
@@ -119,6 +123,7 @@ def train(
     dataset = ImageSketchDataset(dataset, processor, ds_sketch_ratio=sketch_ratio)
     logger.info(f"Dataset size before filtering out too long examples: {len(dataset)}")
     eos_token_id, model_max_length = processor.tokenizer.eos_token_id, processor.tokenizer.model_max_length
+    #dataset.filter(lambda ex: (ex['input_ids'] == eos_token_id).nonzero(as_tuple=True)[0].numel() > 0 and (ex['input_ids'] == eos_token_id).nonzero(as_tuple=True)[0][0].item() < model_max_length) # changed after 16967
     dataset.filter(lambda ex: (ex['input_ids'] == eos_token_id).nonzero() < model_max_length)
     logger.info(f"Dataset size after filtering out too long examples: {len(dataset)}")
 
