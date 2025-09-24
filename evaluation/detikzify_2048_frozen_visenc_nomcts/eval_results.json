@@ -1,0 +1,1 @@
+{"detikzify-1B": {"MeanTokenEfficiency": 0.8422439232336068, "CrystalBLEU": 0.017626057415771876, "TexEditDistance": 0.6070400476455688, "ImageSim (EMD)": 0.33867756035790464, "DreamSim": 0.6055836397058824, "KernelInceptionDistance": [0.0228271484375, 0.015869140625]}}

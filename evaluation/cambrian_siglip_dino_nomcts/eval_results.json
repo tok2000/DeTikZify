@@ -1,0 +1,1 @@
+{"detikzify-cambrian-1B": {"MeanTokenEfficiency": 0.4936099717383616, "CrystalBLEU": 0.002099585884534667, "TexEditDistance": 0.6852765083312988, "ImageSim (EMD)": 0.10539404418695908, "DreamSim": 0.3775733116113744, "KernelInceptionDistance": [0.30078125, 0.03369140625]}}

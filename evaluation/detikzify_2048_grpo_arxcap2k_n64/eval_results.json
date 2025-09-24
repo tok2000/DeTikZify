@@ -1,0 +1,1 @@
+{"detikzify-1B-grpo": {"MeanSamplingThroughput": 61.925339366515836, "CrystalBLEU": 0.024265164727204483, "TexEditDistance": 0.5623167753219604, "ImageSim (EMD)": 0.46866268151206397, "DreamSim": 0.7380514705882353, "KernelInceptionDistance": [0.00640869140625, 0.01171875]}}

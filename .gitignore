@@ -161,3 +161,29 @@ cython_debug/
 
 # Project pecific
 */_version.py
+
+# Temporary folders
+hf_cache/*
+local/*
+test/*
+
+# Datasets uploaded elsewhere
+datasets/*
+
+# Slurm output data
+slurm-success/*
+slurm-fails/*
+
+# Models
+detikzify-1B*/
+detikzify-cambrian-concat-1B*/
+dtkz-*/
+
+# intermediate cambrian implementations
+detikzify/cambrian/model/cambrian_v*/
+detikzify/cambrian/model/cambrian_c1/
+detikzify/cambrian/model/cambrian_c2/
+detikzify/cambrian/model/cambrian_c3/
+
+# batch scripts
+*.sh
