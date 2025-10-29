@@ -168,16 +168,38 @@ class DetikzifyModel(DetikzifyPreTrainedModel): # main model class for Detikzify
         input_ids: torch.LongTensor,
         inputs_embeds: Optional[torch.Tensor],
         image_hidden_states: Optional[torch.Tensor],
+        max_img_tokens: int = 300,
     ):
-        num_images, _, vision_hidden_size = image_hidden_states.shape
-        special_image_token_mask = input_ids == self.image_token_id
-        #  Fixes RuntimeError: a leaf Variable that requires grad is being used in an in-place operation.
+        if image_hidden_states is None:
+            raise ValueError("image_hidden_states cannot be None")
+    
+        if image_hidden_states.shape[1] < max_img_tokens:
+            pad_tokens = torch.zeros(
+                (image_hidden_states.shape[0], max_img_tokens - image_hidden_states.shape[1], image_hidden_states.shape[2]),
+                device=image_hidden_states.device
+            )
+            image_hidden_states = torch.cat([image_hidden_states, pad_tokens], dim=1)
+        elif image_hidden_states.shape[1] > max_img_tokens:
+            image_hidden_states = image_hidden_states[:, :max_img_tokens, :]
+    
+        # Clone inputs_embeds to avoid in-place errors
         new_inputs_embeds = inputs_embeds.clone()
-        reshaped_image_hidden_states = image_hidden_states.view(-1, vision_hidden_size)
-        # cast to the dtype of the input_embeds to support quantized models
+        reshaped_image_hidden_states = image_hidden_states.view(-1, image_hidden_states.shape[2])
         reshaped_image_hidden_states = reshaped_image_hidden_states.to(inputs_embeds.dtype)
-        new_inputs_embeds[special_image_token_mask] = reshaped_image_hidden_states
+    
+        # Get mask of special image tokens
+        special_image_token_mask = (input_ids == self.image_token_id).nonzero(as_tuple=True)
+    
+        num_image_tokens = min(len(special_image_token_mask[0]), max_img_tokens)  # Prevent out-of-bounds access
+    
+        if num_image_tokens > reshaped_image_hidden_states.shape[0]:
+            num_image_tokens = reshaped_image_hidden_states.shape[0]  # Prevent indexing error
+    
+        if num_image_tokens > 0:
+            new_inputs_embeds[special_image_token_mask[0][:num_image_tokens], special_image_token_mask[1][:num_image_tokens]] = reshaped_image_hidden_states[:num_image_tokens]
+            
         return new_inputs_embeds
+
 
     def forward( # forward pass for the Detikzify model
         self,
